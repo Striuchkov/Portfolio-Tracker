@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { auth, db } from './services/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -34,6 +35,7 @@ const App: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [cadToUsdRate, setCadToUsdRate] = useState<number | null>(null);
     const [route, setRoute] = useState(window.location.hash);
+    const [selectedAccountId, setSelectedAccountId] = useState<string>('all');
     const portfolioLoaded = useRef(false);
 
     useEffect(() => {
@@ -366,7 +368,13 @@ const App: React.FC = () => {
         return summary;
     }, []);
 
-    const totalPortfolioSummary: PortfolioSummaryData = useMemo(() => calculateSummary(portfolio, cadToUsdRate), [portfolio, cadToUsdRate, calculateSummary]);
+    const filteredAssets = useMemo(() => {
+        if (selectedAccountId === 'all') return portfolio;
+        return portfolio.filter(asset => asset.accountId === selectedAccountId);
+    }, [portfolio, selectedAccountId]);
+
+    const filteredSummary = useMemo(() => calculateSummary(filteredAssets, cadToUsdRate), [filteredAssets, cadToUsdRate, calculateSummary]);
+
 
     const renderContent = () => {
         if (route.startsWith('#/ticker/')) {
@@ -382,7 +390,13 @@ const App: React.FC = () => {
             <main className="container mx-auto p-4 md:p-8">
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                     <div className="lg:col-span-1">
-                        <AccountManager accounts={accounts} createAccount={createAccount} isLoading={isSubmitting} />
+                        <AccountManager 
+                            accounts={accounts} 
+                            createAccount={createAccount} 
+                            isLoading={isSubmitting}
+                            selectedAccountId={selectedAccountId}
+                            onSelectAccount={setSelectedAccountId}
+                        />
                         <AddAssetForm 
                             addAsset={addAsset} 
                             addCash={addCash}
@@ -397,31 +411,15 @@ const App: React.FC = () => {
                         )}
                     </div>
                     <div className="lg:col-span-2">
-                        <PortfolioSummary summary={totalPortfolioSummary} />
-                        <div className="mt-8 space-y-8">
-                            {accounts.map(account => {
-                                const accountAssets = portfolio.filter(asset => asset.accountId === account.id);
-                                const accountSummary = calculateSummary(accountAssets, cadToUsdRate);
-
-                                return (
-                                    <div key={account.id} className="bg-gray-800 p-6 rounded-xl shadow-2xl">
-                                        <div className="flex justify-between items-center mb-4">
-                                            <h2 className="text-2xl font-bold text-white">{account.name}</h2>
-                                            <span className="text-sm font-medium text-primary bg-primary/20 rounded-full px-3 py-1">{account.type}</span>
-                                        </div>
-                                        <PortfolioSummary summary={accountSummary} />
-                                        <div className="mt-6">
-                                            <AssetList assets={accountAssets} removeAsset={removeAsset} refreshAssetDetails={refreshAssetDetails} />
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                            {accounts.length === 0 && (
-                                <div className="mt-8 bg-gray-800 p-8 rounded-xl text-center shadow-inner">
-                                    <h3 className="text-lg font-semibold text-white">No Accounts Found</h3>
-                                    <p className="text-gray-400 mt-2">Create an account on the left to start adding assets.</p>
-                                </div>
-                            )}
+                        <PortfolioSummary summary={filteredSummary} />
+                        <div className="mt-8">
+                            <AssetList 
+                                assets={filteredAssets} 
+                                removeAsset={removeAsset} 
+                                refreshAssetDetails={refreshAssetDetails}
+                                accounts={accounts}
+                                showAccountColumn={selectedAccountId === 'all'}
+                            />
                         </div>
                     </div>
                 </div>

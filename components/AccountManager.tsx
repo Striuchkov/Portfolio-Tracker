@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Account, AccountType } from '../types';
 import { PlusIcon } from './icons/PlusIcon';
@@ -7,9 +8,11 @@ interface AccountManagerProps {
     accounts: Account[];
     createAccount: (name: string, type: AccountType) => Promise<void>;
     isLoading: boolean;
+    selectedAccountId: string;
+    onSelectAccount: (id: string) => void;
 }
 
-const AccountManager: React.FC<AccountManagerProps> = ({ accounts, createAccount, isLoading }) => {
+const AccountManager: React.FC<AccountManagerProps> = ({ accounts, createAccount, isLoading, selectedAccountId, onSelectAccount }) => {
     const [name, setName] = useState('');
     const [type, setType] = useState<AccountType>(AccountType.TFSA);
     const [formError, setFormError] = useState<string | null>(null);
@@ -29,18 +32,33 @@ const AccountManager: React.FC<AccountManagerProps> = ({ accounts, createAccount
     return (
         <div className="bg-gray-800 p-6 rounded-xl shadow-2xl mb-8">
             <h2 className="text-xl font-bold text-white">Accounts</h2>
-            <ul className="my-4 space-y-2">
-                {accounts.length > 0 ? (
-                    accounts.map(account => (
-                        <li key={account.id} className="bg-gray-700 p-3 rounded-lg flex justify-between items-center">
-                            <span className="font-medium text-white">{account.name}</span>
-                            <span className="text-xs text-primary bg-primary/20 rounded-full px-2 py-0.5">{account.type}</span>
-                        </li>
-                    ))
-                ) : (
-                    <p className="text-gray-400 text-sm">You haven't created any accounts yet.</p>
+            <div className="my-4 space-y-2">
+                 <button
+                    onClick={() => onSelectAccount('all')}
+                    className={`w-full text-left p-3 rounded-lg flex justify-between items-center transition-colors ${
+                        selectedAccountId === 'all' ? 'bg-primary text-white' : 'bg-gray-700 hover:bg-gray-600'
+                    }`}
+                >
+                    <span className="font-medium">Total Portfolio</span>
+                </button>
+                {accounts.map(account => (
+                     <button
+                        key={account.id}
+                        onClick={() => onSelectAccount(account.id)}
+                        className={`w-full text-left p-3 rounded-lg flex justify-between items-center transition-colors ${
+                            selectedAccountId === account.id ? 'bg-primary text-white' : 'bg-gray-700 hover:bg-gray-600'
+                        }`}
+                    >
+                        <span className="font-medium">{account.name}</span>
+                        <span className={`text-xs font-bold rounded-full px-2 py-0.5 ${
+                            selectedAccountId === account.id ? 'bg-white/20' : 'text-primary bg-primary/20'
+                        }`}>{account.type}</span>
+                    </button>
+                ))}
+                {accounts.length === 0 && (
+                    <p className="text-gray-400 text-sm px-3">You haven't created any accounts yet.</p>
                 )}
-            </ul>
+            </div>
 
             <form onSubmit={handleSubmit} className="space-y-4 border-t border-gray-700 pt-4">
                  <h3 className="text-lg font-semibold text-white">Create New Account</h3>

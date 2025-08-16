@@ -1,5 +1,6 @@
+
 import React, { useState } from 'react';
-import { Asset, AssetType, StockAsset } from '../types';
+import { Asset, AssetType, StockAsset, Account } from '../types';
 import { TrashIcon } from './icons/TrashIcon';
 import { RefreshIcon } from './icons/RefreshIcon';
 import { formatCurrency, formatPercentage, formatNumber } from '../utils/formatting';
@@ -8,6 +9,8 @@ interface AssetListProps {
     assets: Asset[];
     removeAsset: (id: string) => void;
     refreshAssetDetails: (asset: Asset) => void;
+    accounts: Account[];
+    showAccountColumn: boolean;
 }
 
 const ChevronDownIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
@@ -27,7 +30,7 @@ const DataPoint: React.FC<{ label: string; value: string | number | null | undef
 };
 
 
-const StockAssetItem: React.FC<{ asset: StockAsset, removeAsset: (id: string) => void, refreshAssetDetails: (asset: Asset) => void }> = ({ asset, removeAsset, refreshAssetDetails }) => {
+const StockAssetItem: React.FC<{ asset: StockAsset, removeAsset: (id: string) => void, refreshAssetDetails: (asset: Asset) => void, showAccountColumn: boolean, accountName?: string }> = ({ asset, removeAsset, refreshAssetDetails, showAccountColumn, accountName }) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const marketValue = asset.shares * asset.currentPrice;
     const totalCost = asset.shares * asset.avgCost;
@@ -51,6 +54,7 @@ const StockAssetItem: React.FC<{ asset: StockAsset, removeAsset: (id: string) =>
                         </div>
                     </div>
                 </td>
+                {showAccountColumn && <td className="p-4 align-top">{accountName || 'N/A'}</td>}
                 <td className="p-4 text-right align-top">{formatCurrency(asset.currentPrice)}</td>
                 <td className="p-4 text-right align-top">{formatNumber(asset.shares)}</td>
                 <td className="p-4 text-right align-top">{formatCurrency(marketValue)}</td>
@@ -71,7 +75,7 @@ const StockAssetItem: React.FC<{ asset: StockAsset, removeAsset: (id: string) =>
             </tr>
             {isExpanded && (
                 <tr className="bg-gray-800/50">
-                    <td colSpan={6} className="p-4 border-b border-gray-700">
+                    <td colSpan={showAccountColumn ? 7 : 6} className="p-4 border-b border-gray-700">
                          <div className="space-y-4">
                             <p className="text-gray-300 text-sm leading-relaxed">{asset.companyProfile}</p>
                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-y-4 gap-x-2 text-sm pt-4 border-t border-gray-700/50">
@@ -92,13 +96,14 @@ const StockAssetItem: React.FC<{ asset: StockAsset, removeAsset: (id: string) =>
     );
 };
 
-const CashAssetItem: React.FC<{ asset: Extract<Asset, {type: AssetType.Cash}>, removeAsset: (id: string) => void }> = ({ asset, removeAsset }) => {
+const CashAssetItem: React.FC<{ asset: Extract<Asset, {type: AssetType.Cash}>, removeAsset: (id: string) => void, showAccountColumn: boolean, accountName?: string }> = ({ asset, removeAsset, showAccountColumn, accountName }) => {
     return (
         <tr className="border-b border-gray-700 hover:bg-gray-700/50 transition-colors">
             <td className="p-4 align-top">
                 <div className="font-bold text-white">{asset.name}</div>
                 <div className="text-sm text-gray-400">{asset.currency}</div>
             </td>
+             {showAccountColumn && <td className="p-4 align-top">{accountName || 'N/A'}</td>}
             <td className="p-4 text-right align-top text-gray-500">N/A</td>
             <td className="p-4 text-right align-top">{formatNumber(asset.amount)}</td>
             <td className="p-4 text-right align-top">{formatCurrency(asset.amount)}</td>
@@ -114,11 +119,11 @@ const CashAssetItem: React.FC<{ asset: Extract<Asset, {type: AssetType.Cash}>, r
     );
 };
 
-const AssetList: React.FC<AssetListProps> = ({ assets, removeAsset, refreshAssetDetails }) => {
+const AssetList: React.FC<AssetListProps> = ({ assets, removeAsset, refreshAssetDetails, accounts, showAccountColumn }) => {
     if (assets.length === 0) {
         return (
             <div className="bg-gray-800 p-8 rounded-xl text-center shadow-inner">
-                <h3 className="text-lg font-semibold text-white">This account is empty.</h3>
+                <h3 className="text-lg font-semibold text-white">This view is empty.</h3>
                 <p className="text-gray-400 mt-2">Add a new stock or cash balance to get started.</p>
             </div>
         );
@@ -140,6 +145,7 @@ const AssetList: React.FC<AssetListProps> = ({ assets, removeAsset, refreshAsset
                     <thead className="text-xs text-gray-400 uppercase bg-gray-700/50">
                         <tr>
                             <th scope="col" className="p-4">Asset</th>
+                            {showAccountColumn && <th scope="col" className="p-4">Account</th>}
                             <th scope="col" className="p-4 text-right">Price</th>
                             <th scope="col" className="p-4 text-right">Shares/Amount</th>
                             <th scope="col" className="p-4 text-right">Market Value</th>
@@ -149,10 +155,11 @@ const AssetList: React.FC<AssetListProps> = ({ assets, removeAsset, refreshAsset
                     </thead>
                     <tbody>
                         {sortedAssets.map(asset => {
+                            const accountName = accounts.find(acc => acc.id === asset.accountId)?.name;
                             if (asset.type === AssetType.Stock) {
-                                return <StockAssetItem key={asset.id} asset={asset} removeAsset={removeAsset} refreshAssetDetails={refreshAssetDetails} />;
+                                return <StockAssetItem key={asset.id} asset={asset} removeAsset={removeAsset} refreshAssetDetails={refreshAssetDetails} showAccountColumn={showAccountColumn} accountName={accountName} />;
                             } else {
-                                return <CashAssetItem key={asset.id} asset={asset} removeAsset={removeAsset} />;
+                                return <CashAssetItem key={asset.id} asset={asset} removeAsset={removeAsset} showAccountColumn={showAccountColumn} accountName={accountName} />;
                             }
                         })}
                     </tbody>
