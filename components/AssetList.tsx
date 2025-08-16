@@ -38,12 +38,14 @@ const StockAssetItem: React.FC<{ asset: Extract<Asset, {type: AssetType.Stock}>,
 
     return (
         <>
-            <tr className="border-b border-gray-700 hover:bg-gray-700/50 transition-colors cursor-pointer" onClick={() => setIsExpanded(!isExpanded)}>
+            <tr className="border-b border-gray-700 hover:bg-gray-700/50 transition-colors">
                 <td className="p-4 align-top">
                     <div className="flex items-center">
-                        <ChevronDownIcon className={`h-5 w-5 text-gray-400 mr-3 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                        <button onClick={() => setIsExpanded(!isExpanded)} className="flex-shrink-0" aria-label="Expand row">
+                            <ChevronDownIcon className={`h-5 w-5 text-gray-400 mr-3 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                        </button>
                         <div>
-                            <div className="font-bold text-white">{asset.ticker}</div>
+                             <a href={`#/ticker/${encodeURIComponent(asset.ticker)}/${encodeURIComponent(asset.exchange)}`} className="font-bold text-white hover:text-primary transition-colors">{asset.ticker}</a>
                             <div className="text-sm text-gray-400 truncate max-w-[200px]">{asset.name}</div>
                             <div className="text-xs text-primary bg-primary/20 rounded-full px-2 py-0.5 inline-block mt-1">{asset.exchange}</div>
                         </div>

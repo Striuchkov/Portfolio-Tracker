@@ -71,3 +71,30 @@ export interface PortfolioSummaryData {
   dayGainLoss: number;
   overallReturn: number;
 }
+
+export interface TickerNews {
+    title: string;
+    source: string;
+    url: string | null;
+    publishedAt: string; // e.g. "2 hours ago", "2024-07-28"
+}
+
+export interface TickerPriceHistory {
+    date: string; // YYYY-MM-DD
+    close: number;
+}
+
+export interface TickerDetails {
+    name: string;
+    companyProfile: string;
+    marketCap: string | null;
+    peRatio: number | null;
+    dividendYield: number | null;
+    fiftyTwoWeekLow: number | null;
+    fiftyTwoWeekHigh: number | null;
+    news: TickerNews[];
+    priceHistory: TickerPriceHistory[];
+    dayChange: number | null;
+    dayChangePercent: number | null;
+    currentPrice: number;
+}
