@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { auth, googleProvider, facebookProvider } from '../services/firebase';
-import * as firebaseAuth from 'firebase/auth';
+import { signInWithPopup, createUserWithEmailAndPassword, updateProfile, signInWithEmailAndPassword } from 'firebase/auth';
 import { ChartPieIcon } from './icons/ChartPieIcon';
 import { GoogleIcon } from './icons/GoogleIcon';
 import { MetaIcon } from './icons/MetaIcon';
@@ -48,11 +48,11 @@ const Login: React.FC = () => {
     };
 
     const handleGoogleSignIn = () => {
-        handleAuthAction(firebaseAuth.signInWithPopup(auth, googleProvider));
+        handleAuthAction(signInWithPopup(auth, googleProvider));
     };
     
     const handleMetaSignIn = () => {
-        handleAuthAction(firebaseAuth.signInWithPopup(auth, facebookProvider));
+        handleAuthAction(signInWithPopup(auth, facebookProvider));
     };
 
     const handleEmailPasswordSubmit = async (e: React.FormEvent) => {
@@ -62,15 +62,15 @@ const Login: React.FC = () => {
                 setError("Display name is required for sign up.");
                 return;
             }
-            const signUpAction = firebaseAuth.createUserWithEmailAndPassword(auth, email, password)
+            const signUpAction = createUserWithEmailAndPassword(auth, email, password)
                 .then(userCredential => {
                     if (userCredential.user) {
-                        return firebaseAuth.updateProfile(userCredential.user, { displayName });
+                        return updateProfile(userCredential.user, { displayName });
                     }
                 });
             handleAuthAction(signUpAction);
         } else {
-            handleAuthAction(firebaseAuth.signInWithEmailAndPassword(auth, email, password));
+            handleAuthAction(signInWithEmailAndPassword(auth, email, password));
         }
     };
 

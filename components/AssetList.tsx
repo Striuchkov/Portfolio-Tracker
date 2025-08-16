@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Asset, AssetType } from '../types';
+import { Asset, AssetType, StockAsset } from '../types';
 import { TrashIcon } from './icons/TrashIcon';
 import { RefreshIcon } from './icons/RefreshIcon';
 import { formatCurrency, formatPercentage, formatNumber } from '../utils/formatting';
@@ -7,7 +7,7 @@ import { formatCurrency, formatPercentage, formatNumber } from '../utils/formatt
 interface AssetListProps {
     assets: Asset[];
     removeAsset: (id: string) => void;
-    refreshAsset: (asset: Asset) => void;
+    refreshAssetMetrics: (asset: Asset) => void;
 }
 
 const ChevronDownIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
@@ -27,7 +27,7 @@ const DataPoint: React.FC<{ label: string; value: string | number | null | undef
 };
 
 
-const StockAssetItem: React.FC<{ asset: Extract<Asset, {type: AssetType.Stock}>, removeAsset: (id: string) => void, refreshAsset: (asset: Asset) => void }> = ({ asset, removeAsset, refreshAsset }) => {
+const StockAssetItem: React.FC<{ asset: StockAsset, removeAsset: (id: string) => void, refreshAssetMetrics: (asset: Asset) => void }> = ({ asset, removeAsset, refreshAssetMetrics }) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const marketValue = asset.shares * asset.currentPrice;
     const totalCost = asset.shares * asset.avgCost;
@@ -60,7 +60,7 @@ const StockAssetItem: React.FC<{ asset: Extract<Asset, {type: AssetType.Stock}>,
                 </td>
                 <td className="p-4 align-top">
                     <div className="flex items-center justify-end space-x-2">
-                        <button onClick={(e) => { e.stopPropagation(); refreshAsset(asset); }} className="p-2 text-gray-400 hover:text-white transition-colors" aria-label="Refresh asset">
+                        <button onClick={(e) => { e.stopPropagation(); refreshAssetMetrics(asset); }} className="p-2 text-gray-400 hover:text-white transition-colors" aria-label="Refresh asset metrics">
                             <RefreshIcon className="h-5 w-5" />
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); removeAsset(asset.id); }} className="p-2 text-gray-400 hover:text-negative transition-colors" aria-label="Remove asset">
@@ -72,13 +72,18 @@ const StockAssetItem: React.FC<{ asset: Extract<Asset, {type: AssetType.Stock}>,
             {isExpanded && (
                 <tr className="bg-gray-800/50">
                     <td colSpan={6} className="p-4 border-b border-gray-700">
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-y-4 gap-x-2 text-sm">
-                             <DataPoint label="Avg. Cost" value={asset.avgCost} format={formatCurrency} />
-                             <DataPoint label="52-Wk High" value={asset.fiftyTwoWeekHigh} format={formatCurrency} />
-                             <DataPoint label="52-Wk Low" value={asset.fiftyTwoWeekLow} format={formatCurrency} />
-                             <DataPoint label="P/E Ratio" value={asset.peRatio} />
-                             <DataPoint label="Forward P/E" value={asset.forwardPeRatio} />
-                             <DataPoint label="Annual Dividend" value={asset.yearlyDividend && asset.yearlyDividend > 0 ? asset.yearlyDividend : null} format={formatCurrency} />
+                         <div className="space-y-4">
+                            <p className="text-gray-300 text-sm leading-relaxed">{asset.companyProfile}</p>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-y-4 gap-x-2 text-sm pt-4 border-t border-gray-700/50">
+                                 <DataPoint label="Avg. Cost" value={asset.avgCost} format={formatCurrency} />
+                                 <DataPoint label="Market Cap" value={asset.marketCap} />
+                                 <DataPoint label="P/E Ratio" value={asset.peRatio} />
+                                 <DataPoint label="Forward P/E" value={asset.forwardPeRatio} />
+                                 <DataPoint label="52-Wk High" value={asset.fiftyTwoWeekHigh} format={formatCurrency} />
+                                 <DataPoint label="52-Wk Low" value={asset.fiftyTwoWeekLow} format={formatCurrency} />
+                                 <DataPoint label="Div. Yield" value={asset.dividendYield ? asset.dividendYield : null} format={formatPercentage} />
+                                 <DataPoint label="Annual Div" value={asset.yearlyDividend && asset.yearlyDividend > 0 ? asset.yearlyDividend : null} format={formatCurrency} />
+                            </div>
                         </div>
                     </td>
                 </tr>
@@ -109,7 +114,7 @@ const CashAssetItem: React.FC<{ asset: Extract<Asset, {type: AssetType.Cash}>, r
     );
 };
 
-const AssetList: React.FC<AssetListProps> = ({ assets, removeAsset, refreshAsset }) => {
+const AssetList: React.FC<AssetListProps> = ({ assets, removeAsset, refreshAssetMetrics }) => {
     if (assets.length === 0) {
         return (
             <div className="bg-gray-800 p-8 rounded-xl text-center shadow-inner">
@@ -145,7 +150,7 @@ const AssetList: React.FC<AssetListProps> = ({ assets, removeAsset, refreshAsset
                     <tbody>
                         {sortedAssets.map(asset => {
                             if (asset.type === AssetType.Stock) {
-                                return <StockAssetItem key={asset.id} asset={asset} removeAsset={removeAsset} refreshAsset={refreshAsset} />;
+                                return <StockAssetItem key={asset.id} asset={asset} removeAsset={removeAsset} refreshAssetMetrics={refreshAssetMetrics} />;
                             } else {
                                 return <CashAssetItem key={asset.id} asset={asset} removeAsset={removeAsset} />;
                             }

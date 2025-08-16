@@ -1,6 +1,6 @@
-import * as firebaseApp from 'firebase/app';
-import * as firebaseAuth from 'firebase/auth';
-import * as firestore from 'firebase/firestore';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth, GoogleAuthProvider, FacebookAuthProvider } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
 //conf
 const firebaseConfig = {
   apiKey: "AIzaSyAhtOISp-677mDxbK0l2hNwgBpsb1iXH5M",
@@ -12,11 +12,11 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-const app = !firebaseApp.getApps().length ? firebaseApp.initializeApp(firebaseConfig) : firebaseApp.getApp();
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 
 // Export Firebase services
-export const auth = firebaseAuth.getAuth(app);
-export const db = firestore.getFirestore(app);
-export const googleProvider = new firebaseAuth.GoogleAuthProvider();
-export const facebookProvider = new firebaseAuth.FacebookAuthProvider();
+export const auth = getAuth(app);
+export const db = getFirestore(app);
+export const googleProvider = new GoogleAuthProvider();
+export const facebookProvider = new FacebookAuthProvider();

@@ -1,6 +1,6 @@
-import * as firebaseAuth from 'firebase/auth';
+import type { User as FirebaseUser } from 'firebase/auth';
 
-export type User = firebaseAuth.User;
+export type User = FirebaseUser;
 
 export enum Exchange {
   USA = 'USA',
@@ -35,7 +35,7 @@ export interface UserProfileData {
 }
 
 interface BaseAsset {
-  id: string;
+  id:string;
   accountId: string;
 }
 
@@ -52,6 +52,12 @@ export interface StockAsset extends BaseAsset {
   forwardPeRatio: number | null;
   fiftyTwoWeekLow: number | null;
   fiftyTwoWeekHigh: number | null;
+  // New fields for caching
+  companyProfile: string;
+  marketCap: string | null;
+  dividendYield: number | null;
+  lastPriceUpdate: number; // timestamp
+  lastMetricsUpdate: number; // timestamp
 }
 
 export interface CashAsset extends BaseAsset {

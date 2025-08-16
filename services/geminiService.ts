@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { Exchange, TickerDetails, TickerNews, TickerPriceHistory } from "../types";
+import { Exchange, StockAsset, TickerDetails, TickerNews, TickerPriceHistory } from "../types";
 
 export const isApiKeyConfigured = !!process.env.API_KEY;
 
@@ -10,85 +10,138 @@ if (!isApiKeyConfigured) {
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-interface StockData {
-    ticker: string;
-    name: string;
-    price: number;
-    yearlyDividend: number | null;
-    peRatio: number | null;
-    forwardPeRatio: number | null;
-    fiftyTwoWeekLow: number | null;
-    fiftyTwoWeekHigh: number | null;
-}
+const getGeminiTextResponse = async (prompt: string, useSearch: boolean = false): Promise<string> => {
+     const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: {
+            tools: useSearch ? [{ googleSearch: {} }] : undefined,
+            temperature: 0.1,
+        },
+    });
+    const text = response.text;
+    if (!text) {
+        throw new Error("No text in Gemini response.");
+    }
+    return text;
+};
 
-const parseGeminiStockResponse = (responseText: string): StockData | null => {
+const getGeminiJsonResponse = async <T>(prompt: string, schema: any, useSearch: boolean = false): Promise<T | null> => {
+    const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: {
+            tools: useSearch ? [{ googleSearch: {} }] : undefined,
+            responseMimeType: "application/json",
+            responseSchema: schema,
+        },
+    });
+    const jsonText = response.text.trim();
+    if (!jsonText) return null;
+    return JSON.parse(jsonText) as T;
+};
+
+
+export const fetchFullStockData = async (query: string, exchange: Exchange): Promise<Partial<StockAsset> | null> => {
+    if (!isApiKeyConfigured) return null;
+    const prompt = `Fetch the latest, most up-to-date detailed information for the stock with ticker or company name "${query}" on a ${exchange} exchange using real-time search. Provide the response as a single block of text with key-value pairs separated by ":::". Use "|||" to separate each pair. Keys must be: ticker, name, currentPrice, yearlyDividend, peRatio, forwardPeRatio, fiftyTwoWeekLow, fiftyTwoWeekHigh, companyProfile, marketCap, dividendYield. For companyProfile, provide a brief 2-3 sentence summary. For marketCap, provide a string (e.g., "1.2T"). For any unavailable values, use "N/A". Do not add any explanation, markdown, or formatting.`;
+
     try {
-        const getValue = (key: string): string | null => {
-            const regex = new RegExp(`${key}:\\s*([^,\\n]*)`, 'i');
-            const match = responseText.match(regex);
-            return match && match[1] ? match[1].trim() : null;
-        };
-
-        const getNumericValue = (key: string): number | null => {
-            const value = getValue(key);
-            if (!value || value.toLowerCase() === 'n/a') {
-                return null;
+        const text = await getGeminiTextResponse(prompt, true);
+        const data = new Map<string, string>();
+        text.split('|||').forEach(pair => {
+            const parts = pair.split(':::');
+            if (parts.length === 2) {
+                data.set(parts[0].trim().toLowerCase(), parts[1].trim());
             }
-            const numeric = parseFloat(value.replace(/,/g, ''));
-            return isNaN(numeric) ? null : numeric;
+        });
+
+        const getStr = (key: string): string | null => data.get(key) && data.get(key)?.toLowerCase() !== 'n/a' ? data.get(key) ?? null : null;
+        const getNum = (key: string): number | null => {
+            const val = data.get(key);
+            if (!val || val.toLowerCase() === 'n/a') return null;
+            const num = parseFloat(val.replace(/,/g, ''));
+            return isNaN(num) ? null : num;
         };
 
-        const ticker = getValue("TICKER");
-        const name = getValue("NAME");
-        const price = getNumericValue("PRICE");
+        const ticker = getStr("ticker");
+        const name = getStr("name");
+        const currentPrice = getNum("currentprice");
 
-        if (!ticker || !name || price === null) {
-            console.error("Failed to parse essential fields (TICKER, NAME or PRICE) from response:", responseText);
+        if (!ticker || !name || currentPrice === null) {
+            console.error("Failed to parse essential fields from response:", text);
             return null;
         }
 
         return {
-            ticker,
+            ticker: ticker.toUpperCase(),
             name,
-            price,
-            yearlyDividend: getNumericValue("YEARLY_DIVIDEND"),
-            peRatio: getNumericValue("PE_RATIO"),
-            forwardPeRatio: getNumericValue("FORWARD_PE"),
-            fiftyTwoWeekLow: getNumericValue("52_WEEK_LOW"),
-            fiftyTwoWeekHigh: getNumericValue("52_WEEK_HIGH"),
+            currentPrice,
+            yearlyDividend: getNum("yearlydividend"),
+            peRatio: getNum("peratio"),
+            forwardPeRatio: getNum("forwardperatio"),
+            fiftyTwoWeekLow: getNum("fiftytwoweeklow"),
+            fiftyTwoWeekHigh: getNum("fiftytwoweekhigh"),
+            companyProfile: getStr("companyprofile") ?? 'No profile available.',
+            marketCap: getStr("marketcap"),
+            dividendYield: getNum("dividendyield"),
         };
+
     } catch (error) {
-        console.error("Error parsing Gemini response:", error);
+        console.error(`Error fetching full data for ${query}:`, error);
+        throw new Error(`Failed to fetch data for ${query}.`);
+    }
+};
+
+export const fetchBatchPrices = async (assets: Pick<StockAsset, 'ticker' | 'exchange'>[]): Promise<{ ticker: string; exchange: string; price: number }[] | null> => {
+    if (!isApiKeyConfigured || assets.length === 0) return null;
+    
+    const assetList = assets.map(a => `${a.ticker} on ${a.exchange} exchange`).join(', ');
+    const prompt = `Fetch the latest stock price for the following assets: ${assetList}. Respond with a JSON array where each object has "ticker" (string), "exchange" (string), and "price" (number). Ensure ticker and exchange in the response match the requested assets exactly. Use real-time search for accuracy.`;
+
+    try {
+        return await getGeminiJsonResponse(prompt, {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    ticker: { type: Type.STRING },
+                    exchange: { type: Type.STRING },
+                    price: { type: Type.NUMBER }
+                },
+                required: ["ticker", "exchange", "price"]
+            }
+        }, true);
+    } catch (error) {
+        console.error(`Error fetching batch prices:`, error);
         return null;
     }
 };
 
-export const fetchAssetData = async (query: string, exchange: Exchange): Promise<StockData | null> => {
+export const fetchStockMetrics = async (ticker: string, exchange: Exchange): Promise<Partial<StockAsset> | null> => {
     if (!isApiKeyConfigured) return null;
-    const prompt = `Fetch the latest stock data for the company or ticker symbol "${query}" listed on a ${exchange} exchange. Provide the response as a single line of comma-separated key-value pairs in the format: "TICKER: [Ticker Symbol], NAME: [Full Company Name], PRICE: [Latest Price], YEARLY_DIVIDEND: [Annual Dividend per Share], PE_RATIO: [Current P/E Ratio], FORWARD_PE: [Forward P/E Ratio], 52_WEEK_LOW: [52-week Low Price], 52_WEEK_HIGH: [52-week High Price]". For any unavailable data, use "N/A" for the value. Do not include currency symbols, thousands separators in numbers, or any other text, explanation or line breaks.`;
+
+    const prompt = `Fetch the latest key metrics for the stock with ticker symbol "${ticker}" on a ${exchange} exchange using real-time search. Provide the response as a JSON object with the following keys: "peRatio" (number or null), "forwardPeRatio" (number or null), "fiftyTwoWeekLow" (number or null), "fiftyTwoWeekHigh" (number or null), "marketCap" (string or null), "dividendYield" (number or null), "yearlyDividend" (number or null). For unavailable values, use null.`;
 
     try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                tools: [{ googleSearch: {} }],
-                temperature: 0.1,
-            },
-        });
-        
-        const text = response.text;
-        if (!text) {
-            console.error("No text in Gemini response for query:", query);
-            return null;
-        }
-
-        return parseGeminiStockResponse(text);
+        return await getGeminiJsonResponse<Partial<StockAsset>>(prompt, {
+            type: Type.OBJECT,
+            properties: {
+                peRatio: { type: Type.NUMBER },
+                forwardPeRatio: { type: Type.NUMBER },
+                fiftyTwoWeekLow: { type: Type.NUMBER },
+                fiftyTwoWeekHigh: { type: Type.NUMBER },
+                marketCap: { type: Type.STRING },
+                dividendYield: { type: Type.NUMBER },
+                yearlyDividend: { type: Type.NUMBER },
+            }
+        }, true);
     } catch (error) {
-        console.error(`Error fetching data for ${query} from Gemini API:`, error);
-        throw new Error(`Failed to fetch data for ${query}. The API might be temporarily unavailable.`);
+        console.error(`Error fetching metrics for ${ticker}:`, error);
+        return null;
     }
 };
+
 
 export const fetchTickerDetails = async (ticker: string, exchange: Exchange): Promise<TickerDetails | null> => {
     if (!isApiKeyConfigured) return null;
@@ -101,21 +154,8 @@ export const fetchTickerDetails = async (ticker: string, exchange: Exchange): Pr
 - Do not add any explanation, markdown, or formatting.`;
 
     try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                tools: [{ googleSearch: {} }],
-                temperature: 0.1,
-            },
-        });
-
-        const text = response.text;
-        if (!text) {
-            console.error("No text in Gemini response for ticker details:", ticker);
-            return null;
-        }
-
+        const text = await getGeminiTextResponse(prompt, true);
+        
         const data = new Map<string, string>();
         text.split('|||').forEach(pair => {
             const parts = pair.split(':::');
@@ -167,28 +207,19 @@ export const fetchTickerNews = async (ticker: string, exchange: Exchange): Promi
     const prompt = `Fetch the 5 most recent and relevant news articles for the stock with ticker "${ticker}" on a ${exchange} exchange.`;
 
     try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            title: { type: Type.STRING },
-                            source: { type: Type.STRING },
-                            url: { type: Type.STRING },
-                            publishedAt: { type: Type.STRING, description: "e.g. 2 hours ago, 2024-07-28" },
-                        },
-                        required: ["title", "source", "url", "publishedAt"],
-                    },
+        return await getGeminiJsonResponse(prompt, {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    title: { type: Type.STRING },
+                    source: { type: Type.STRING },
+                    url: { type: Type.STRING },
+                    publishedAt: { type: Type.STRING, description: "e.g. 2 hours ago, 2024-07-28" },
                 },
+                required: ["title", "source", "url", "publishedAt"],
             },
         });
-        const jsonText = response.text.trim();
-        return JSON.parse(jsonText) as TickerNews[];
     } catch (error) {
         console.error(`Error fetching news for ${ticker}:`, error);
         throw new Error(`Failed to fetch news for ${ticker}.`);
@@ -216,15 +247,7 @@ export const generatePriceChartSvg = async (priceHistory: TickerPriceHistory[], 
     `;
 
     try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                temperature: 0.1,
-            },
-        });
-        const text = response.text;
-        if (!text) return null;
+        const text = await getGeminiTextResponse(prompt);
         const svgMatch = text.match(/<svg.*?>[\s\S]*?<\/svg>/);
         return svgMatch ? svgMatch[0] : null;
 
@@ -239,18 +262,7 @@ export const fetchCadToUsdRate = async (): Promise<number | null> => {
     const prompt = `What is the current exchange rate for 1 Canadian Dollar (CAD) to US Dollars (USD)? Provide only the numeric value, for example: 0.75`;
 
     try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                tools: [{ googleSearch: {} }],
-                temperature: 0,
-            },
-        });
-
-        const text = response.text;
-        if (!text) return null;
-
+        const text = await getGeminiTextResponse(prompt, true);
         const rate = parseFloat(text);
         return isNaN(rate) ? null : rate;
     } catch (error) {

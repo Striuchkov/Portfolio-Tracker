@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { auth, db } from './services/firebase';
-import * as firebaseAuth from 'firebase/auth';
-import { collection, doc, onSnapshot, setDoc, deleteDoc, updateDoc, query, addDoc, where } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
+import { collection, doc, onSnapshot, setDoc, deleteDoc, updateDoc, query, addDoc, where, writeBatch } from 'firebase/firestore';
 
 import Header from './components/Header';
 import AccountManager from './components/AccountManager';
@@ -13,8 +13,8 @@ import Login from './components/Login';
 import TickerPage from './components/TickerPage';
 import { SpinnerIcon } from './components/icons/SpinnerIcon';
 
-import { Asset, PortfolioSummaryData, Exchange, Account, AccountType, UserProfileData, AssetType, Currency, StockAsset, CashAsset } from './types';
-import { isApiKeyConfigured, fetchAssetData, fetchCadToUsdRate } from './services/geminiService';
+import { User, Asset, PortfolioSummaryData, Exchange, Account, AccountType, UserProfileData, AssetType, Currency, StockAsset, CashAsset } from './types';
+import { isApiKeyConfigured, fetchFullStockData, fetchCadToUsdRate, fetchBatchPrices, fetchStockMetrics } from './services/geminiService';
 
 const WarningIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" {...props}>
@@ -23,7 +23,7 @@ const WarningIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
 );
 
 const App: React.FC = () => {
-    const [user, setUser] = useState<firebaseAuth.User | null>(null);
+    const [user, setUser] = useState<User | null>(null);
     const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
     const [portfolio, setPortfolio] = useState<Asset[]>([]);
     const [accounts, setAccounts] = useState<Account[]>([]);
@@ -34,6 +34,7 @@ const App: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [cadToUsdRate, setCadToUsdRate] = useState<number | null>(null);
     const [route, setRoute] = useState(window.location.hash);
+    const portfolioLoaded = useRef(false);
 
     useEffect(() => {
         const handleHashChange = () => {
@@ -45,20 +46,67 @@ const App: React.FC = () => {
 
     useEffect(() => {
         if (!isApiKeyConfigured) return;
-        const unsubscribe = firebaseAuth.onAuthStateChanged(auth, (currentUser) => {
+        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
             setUser(currentUser);
             setIsAuthLoading(false);
         });
         return () => unsubscribe();
     }, []);
 
+    const refreshAssetMetrics = useCallback(async (asset: Asset) => {
+        if (!user || asset.type !== AssetType.Stock) return;
+        // This can be a silent update, but for manual clicks, loading is good.
+        // Let's create a separate state for background tasks vs user-initiated tasks.
+        // For now, re-using isLoading is fine.
+        setIsLoading(true);
+        setError(null);
+        try {
+            const metrics = await fetchStockMetrics(asset.ticker, asset.exchange);
+            if (!metrics) {
+                throw new Error(`Could not refresh metrics for ${asset.ticker}.`);
+            }
+            const assetDocRef = doc(db, 'users', user.uid, 'portfolio', asset.id);
+            await updateDoc(assetDocRef, {
+                ...metrics,
+                lastMetricsUpdate: Date.now(),
+            });
+
+        } catch (err: unknown) {
+             if (err instanceof Error) {
+                setError(err.message);
+            } else {
+                setError('An unknown error occurred while refreshing.');
+            }
+        } finally {
+            setIsLoading(false);
+        }
+    }, [user]);
+
+    const checkAndRefreshMetrics = useCallback(async (assets: StockAsset[]) => {
+        const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
+        const assetsToUpdate = assets.filter(asset => !asset.lastMetricsUpdate || asset.lastMetricsUpdate < twentyFourHoursAgo);
+
+        if (assetsToUpdate.length > 0) {
+            console.log(`Found ${assetsToUpdate.length} assets with stale metrics. Updating in background...`);
+            for (const asset of assetsToUpdate) {
+                try {
+                    await refreshAssetMetrics(asset);
+                } catch (e) {
+                    console.error(`Failed to background-refresh metrics for ${asset.ticker}`, e);
+                }
+                await new Promise(resolve => setTimeout(resolve, 1000)); // Stagger API calls
+            }
+            console.log("Background metric update complete.");
+        }
+    }, [user, refreshAssetMetrics]);
+    
     useEffect(() => {
         if (!user || !isApiKeyConfigured) {
             setPortfolio([]);
             setAccounts([]);
             setUserProfile(null);
             setCadToUsdRate(null);
-            // In case auth loading finishes before API key check, stop auth loading.
+            portfolioLoaded.current = false;
             if (!isApiKeyConfigured) setIsAuthLoading(false);
             return;
         }
@@ -79,6 +127,13 @@ const App: React.FC = () => {
         const unsubscribePortfolio = onSnapshot(qPortfolio, (querySnapshot) => {
             const assets = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Asset));
             setPortfolio(assets);
+             if (!portfolioLoaded.current && assets.length > 0) {
+                const stockAssets = assets.filter(a => a.type === AssetType.Stock) as StockAsset[];
+                if (stockAssets.length > 0) {
+                    checkAndRefreshMetrics(stockAssets);
+                }
+                portfolioLoaded.current = true;
+            }
         }, (err) => {
             console.error("Error listening to portfolio:", err);
             setError("Could not load portfolio from the cloud.");
@@ -107,7 +162,44 @@ const App: React.FC = () => {
             unsubscribeAccounts();
             unsubscribeProfile();
         };
-    }, [user]);
+    }, [user, checkAndRefreshMetrics]);
+
+    // Effect for periodic price updates
+    useEffect(() => {
+        if (!user || portfolio.length === 0) {
+            return;
+        }
+
+        const stockAssets = portfolio.filter(asset => asset.type === AssetType.Stock) as StockAsset[];
+        if (stockAssets.length === 0) return;
+
+        const intervalId = setInterval(async () => {
+            console.log("Fetching batch price updates...");
+            try {
+                const priceUpdates = await fetchBatchPrices(stockAssets);
+                if (priceUpdates && priceUpdates.length > 0) {
+                    const batch = writeBatch(db);
+                    priceUpdates.forEach(update => {
+                        const assetToUpdate = stockAssets.find(a => a.ticker === update.ticker && a.exchange === update.exchange);
+                        if (assetToUpdate) {
+                            const docRef = doc(db, 'users', user.uid, 'portfolio', assetToUpdate.id);
+                            batch.update(docRef, {
+                                currentPrice: update.price,
+                                lastPriceUpdate: Date.now(),
+                            });
+                        }
+                    });
+                    await batch.commit();
+                    console.log(`Successfully updated prices for ${priceUpdates.length} assets.`);
+                }
+            } catch (e) {
+                console.error("Failed to batch update prices:", e);
+            }
+        }, 60000); // 1 minute
+
+        return () => clearInterval(intervalId);
+    }, [user, portfolio]);
+
 
     const createAccount = useCallback(async (name: string, type: AccountType) => {
         if (!user) return;
@@ -148,8 +240,8 @@ const App: React.FC = () => {
         setIsLoading(true);
         setError(null);
         try {
-            const data = await fetchAssetData(query, exchange);
-            if (!data || !data.ticker) {
+            const data = await fetchFullStockData(query, exchange);
+            if (!data || !data.ticker || !data.currentPrice) {
                 throw new Error(`Could not fetch data for "${query}". Please check the company name/ticker and exchange.`);
             }
 
@@ -169,16 +261,21 @@ const App: React.FC = () => {
                 type: AssetType.Stock,
                 accountId,
                 ticker,
-                name: data.name,
+                name: data.name ?? 'Unknown Name',
                 shares,
                 avgCost,
                 exchange,
-                currentPrice: data.price,
-                yearlyDividend: data.yearlyDividend,
-                peRatio: data.peRatio,
-                forwardPeRatio: data.forwardPeRatio,
-                fiftyTwoWeekLow: data.fiftyTwoWeekLow,
-                fiftyTwoWeekHigh: data.fiftyTwoWeekHigh,
+                currentPrice: data.currentPrice,
+                yearlyDividend: data.yearlyDividend ?? null,
+                peRatio: data.peRatio ?? null,
+                forwardPeRatio: data.forwardPeRatio ?? null,
+                fiftyTwoWeekLow: data.fiftyTwoWeekLow ?? null,
+                fiftyTwoWeekHigh: data.fiftyTwoWeekHigh ?? null,
+                companyProfile: data.companyProfile ?? 'No profile available.',
+                marketCap: data.marketCap ?? null,
+                dividendYield: data.dividendYield ?? null,
+                lastPriceUpdate: Date.now(),
+                lastMetricsUpdate: Date.now(),
             };
 
             const portfolioCollectionRef = collection(db, 'users', user.uid, 'portfolio');
@@ -238,37 +335,6 @@ const App: React.FC = () => {
         } catch (err) {
             console.error("Error removing asset:", err);
             setError("Failed to remove asset.");
-        }
-    }, [user]);
-    
-    const refreshAsset = useCallback(async (asset: Asset) => {
-        if (!user || asset.type !== AssetType.Stock) return;
-        setIsLoading(true);
-        setError(null);
-        try {
-            const data = await fetchAssetData(asset.ticker, asset.exchange);
-            if (!data) {
-                throw new Error(`Could not refresh data for ${asset.ticker}.`);
-            }
-            
-            const assetDocRef = doc(db, 'users', user.uid, 'portfolio', asset.id);
-            await updateDoc(assetDocRef, {
-                currentPrice: data.price,
-                yearlyDividend: data.yearlyDividend,
-                peRatio: data.peRatio,
-                forwardPeRatio: data.forwardPeRatio,
-                fiftyTwoWeekLow: data.fiftyTwoWeekLow,
-                fiftyTwoWeekHigh: data.fiftyTwoWeekHigh,
-            });
-
-        } catch (err: unknown) {
-             if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unknown error occurred while refreshing.');
-            }
-        } finally {
-            setIsLoading(false);
         }
     }, [user]);
 
@@ -347,7 +413,7 @@ const App: React.FC = () => {
                                         </div>
                                         <PortfolioSummary summary={accountSummary} />
                                         <div className="mt-6">
-                                            <AssetList assets={accountAssets} removeAsset={removeAsset} refreshAsset={refreshAsset} />
+                                            <AssetList assets={accountAssets} removeAsset={removeAsset} refreshAssetMetrics={refreshAssetMetrics} />
                                         </div>
                                     </div>
                                 );

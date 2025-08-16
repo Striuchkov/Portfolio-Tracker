@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ChartPieIcon } from './icons/ChartPieIcon';
 import { User } from '../types';
 import { auth } from '../services/firebase';
-import * as firebaseAuth from 'firebase/auth';
+import { signOut } from 'firebase/auth';
 import { CogIcon } from './icons/CogIcon';
 import { LogoutIcon } from './icons/LogoutIcon';
 
@@ -16,7 +16,7 @@ const Header: React.FC<HeaderProps> = ({ user, onOpenProfile }) => {
 
     const handleSignOut = async () => {
         try {
-            await firebaseAuth.signOut(auth);
+            await signOut(auth);
         } catch (error) {
             console.error("Error signing out: ", error);
         }
