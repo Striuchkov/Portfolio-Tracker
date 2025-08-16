@@ -18,9 +18,14 @@ const getGeminiTextResponse = async (prompt: string, useSearch: boolean = false)
             temperature: 0.1,
         },
     });
+    
+    if (response.promptFeedback?.blockReason) {
+        throw new Error(`Request was blocked. Reason: ${response.promptFeedback.blockReason}. Message: ${response.promptFeedback.blockReasonMessage || 'No message.'}`);
+    }
+
     const text = response.text;
     if (!text) {
-        throw new Error("No text in Gemini response.");
+        throw new Error("No text in Gemini response. The API may have returned an empty response or the request was blocked silently.");
     }
     return text;
 };
@@ -271,15 +276,18 @@ export const fetchPriceHistory = async (ticker: string, exchange: Exchange, rang
     let promptRangeText = '';
     let promptIntervalText = 'daily closing prices';
     let responseFormat = 'a semicolon-separated list of date:close pairs (e.g., 2023-01-01:150.00;2023-01-02:151.25;...)';
+    let useSearch = false;
 
     switch (range) {
         case '1D':
             promptRangeText = 'for today';
             promptIntervalText = 'intraday prices at 15-minute intervals';
-            responseFormat = 'a semicolon-separated list of time:price pairs (e.g., 09:30:00:150.00;09:45:00:151.25;...)';
+            responseFormat = 'a semicolon-separated list of time:price pairs (e.g., "09:30:00:150.00;09:45:00:151.25;...")';
+            useSearch = true;
             break;
         case '5D':
             promptRangeText = 'for the last 5 days';
+            useSearch = true;
             break;
         case '1M':
             promptRangeText = 'for the last 1 month';
@@ -295,10 +303,10 @@ export const fetchPriceHistory = async (ticker: string, exchange: Exchange, rang
             break;
     }
 
-    const prompt = `Fetch the price history for the stock with ticker symbol "${ticker}" on a ${exchange} exchange ${promptRangeText}, using real-time search. Provide ${promptIntervalText}. The response must be a single block of text containing ${responseFormat}. If data is unavailable, return an empty response. Do not add any explanation, markdown, or formatting.`;
+    const prompt = `Provide the price history for the stock with ticker "${ticker}" on a ${exchange} exchange ${promptRangeText}. Provide ${promptIntervalText}. The response must be a single block of text containing ${responseFormat}. Do not add any explanation, markdown, or formatting.`;
 
     try {
-        const text = await getGeminiTextResponse(prompt, true);
+        const text = await getGeminiTextResponse(prompt, useSearch);
         if (!text || text.trim() === '') return [];
 
         const history = text.split(';').map(item => {
