@@ -1,0 +1,5 @@
+{
+  "name": "Copy of Gemini Portfolio Tracker",
+  "description": "A modern portfolio tracker for US and Canadian stocks and ETFs, powered by the Gemini API for real-time data.",
+  "requestFramePermissions": []
+}
