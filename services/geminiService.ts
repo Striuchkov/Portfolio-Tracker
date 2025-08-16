@@ -269,19 +269,17 @@ export const fetchPriceHistory = async (ticker: string, exchange: Exchange, rang
     let promptRangeText = '';
     let promptIntervalText = 'daily OHLCV (open, high, low, close, volume) data';
     let responseFormat = `a semicolon-separated list of records. Each record must be in the format: 'date:open:high:low:close:volume'. Example: '2023-01-01:150:152:149:151:1000000'`;
-    let useSearch = false;
+    const useSearch = true; // ALWAYS use search for price history to ensure data is available and grounded.
 
     switch (range) {
         case '1D':
             promptRangeText = 'for today';
             promptIntervalText = 'intraday OHLCV data at 15-minute intervals';
             responseFormat = `a semicolon-separated list of records. Each record must be in the format: 'time:open:high:low:close:volume'. Example: '09:30:00:150:151:149.5:150.5:50000'`;
-            useSearch = true; // Intraday data MUST use search to be accurate and available.
             break;
         case '5D':
             promptRangeText = 'for the last 5 trading days';
             promptIntervalText = 'daily OHLCV data';
-            useSearch = true; // Use search for recent daily data
             break;
         case '1M':
             promptRangeText = 'for the last 1 month';
