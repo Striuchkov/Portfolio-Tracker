@@ -14,7 +14,7 @@ import TickerPage from './components/TickerPage';
 import { SpinnerIcon } from './components/icons/SpinnerIcon';
 
 import { User, Asset, PortfolioSummaryData, Exchange, Account, AccountType, UserProfileData, AssetType, Currency, StockAsset, CashAsset } from './types';
-import { isApiKeyConfigured, fetchFullStockData, fetchCadToUsdRate, fetchBatchPrices, fetchStockMetrics } from './services/geminiService';
+import { isApiKeyConfigured, fetchFullStockData, fetchCadToUsdRate, fetchBatchPrices, fetchStockDetailsForUpdate } from './services/geminiService';
 
 const WarningIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" {...props}>
@@ -53,21 +53,18 @@ const App: React.FC = () => {
         return () => unsubscribe();
     }, []);
 
-    const refreshAssetMetrics = useCallback(async (asset: Asset) => {
+    const refreshAssetDetails = useCallback(async (asset: Asset) => {
         if (!user || asset.type !== AssetType.Stock) return;
-        // This can be a silent update, but for manual clicks, loading is good.
-        // Let's create a separate state for background tasks vs user-initiated tasks.
-        // For now, re-using isLoading is fine.
         setIsLoading(true);
         setError(null);
         try {
-            const metrics = await fetchStockMetrics(asset.ticker, asset.exchange);
-            if (!metrics) {
-                throw new Error(`Could not refresh metrics for ${asset.ticker}.`);
+            const details = await fetchStockDetailsForUpdate(asset.ticker, asset.exchange);
+            if (!details) {
+                throw new Error(`Could not refresh details for ${asset.ticker}.`);
             }
             const assetDocRef = doc(db, 'users', user.uid, 'portfolio', asset.id);
             await updateDoc(assetDocRef, {
-                ...metrics,
+                ...details,
                 lastMetricsUpdate: Date.now(),
             });
 
@@ -82,23 +79,23 @@ const App: React.FC = () => {
         }
     }, [user]);
 
-    const checkAndRefreshMetrics = useCallback(async (assets: StockAsset[]) => {
+    const checkAndRefreshDetails = useCallback(async (assets: StockAsset[]) => {
         const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
         const assetsToUpdate = assets.filter(asset => !asset.lastMetricsUpdate || asset.lastMetricsUpdate < twentyFourHoursAgo);
 
         if (assetsToUpdate.length > 0) {
-            console.log(`Found ${assetsToUpdate.length} assets with stale metrics. Updating in background...`);
+            console.log(`Found ${assetsToUpdate.length} assets with stale details. Updating in background...`);
             for (const asset of assetsToUpdate) {
                 try {
-                    await refreshAssetMetrics(asset);
+                    await refreshAssetDetails(asset);
                 } catch (e) {
-                    console.error(`Failed to background-refresh metrics for ${asset.ticker}`, e);
+                    console.error(`Failed to background-refresh details for ${asset.ticker}`, e);
                 }
                 await new Promise(resolve => setTimeout(resolve, 1000)); // Stagger API calls
             }
-            console.log("Background metric update complete.");
+            console.log("Background detail update complete.");
         }
-    }, [user, refreshAssetMetrics]);
+    }, [user, refreshAssetDetails]);
     
     useEffect(() => {
         if (!user || !isApiKeyConfigured) {
@@ -130,7 +127,7 @@ const App: React.FC = () => {
              if (!portfolioLoaded.current && assets.length > 0) {
                 const stockAssets = assets.filter(a => a.type === AssetType.Stock) as StockAsset[];
                 if (stockAssets.length > 0) {
-                    checkAndRefreshMetrics(stockAssets);
+                    checkAndRefreshDetails(stockAssets);
                 }
                 portfolioLoaded.current = true;
             }
@@ -162,7 +159,7 @@ const App: React.FC = () => {
             unsubscribeAccounts();
             unsubscribeProfile();
         };
-    }, [user, checkAndRefreshMetrics]);
+    }, [user, checkAndRefreshDetails]);
 
     // Effect for periodic price updates
     useEffect(() => {
@@ -274,6 +271,7 @@ const App: React.FC = () => {
                 companyProfile: data.companyProfile ?? 'No profile available.',
                 marketCap: data.marketCap ?? null,
                 dividendYield: data.dividendYield ?? null,
+                priceHistory: data.priceHistory ?? [],
                 lastPriceUpdate: Date.now(),
                 lastMetricsUpdate: Date.now(),
             };
@@ -413,7 +411,7 @@ const App: React.FC = () => {
                                         </div>
                                         <PortfolioSummary summary={accountSummary} />
                                         <div className="mt-6">
-                                            <AssetList assets={accountAssets} removeAsset={removeAsset} refreshAssetMetrics={refreshAssetMetrics} />
+                                            <AssetList assets={accountAssets} removeAsset={removeAsset} refreshAssetDetails={refreshAssetDetails} />
                                         </div>
                                     </div>
                                 );

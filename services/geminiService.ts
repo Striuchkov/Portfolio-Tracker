@@ -42,9 +42,9 @@ const getGeminiJsonResponse = async <T>(prompt: string, schema: any, useSearch: 
 };
 
 
-export const fetchFullStockData = async (query: string, exchange: Exchange): Promise<Partial<StockAsset> | null> => {
+export const fetchFullStockData = async (query: string, exchange: Exchange): Promise<Partial<StockAsset> & { priceHistory?: TickerPriceHistory[] } | null> => {
     if (!isApiKeyConfigured) return null;
-    const prompt = `Fetch the latest, most up-to-date detailed information for the stock with ticker or company name "${query}" on a ${exchange} exchange using real-time search. Provide the response as a single block of text with key-value pairs separated by ":::". Use "|||" to separate each pair. Keys must be: ticker, name, currentPrice, yearlyDividend, peRatio, forwardPeRatio, fiftyTwoWeekLow, fiftyTwoWeekHigh, companyProfile, marketCap, dividendYield. For companyProfile, provide a brief 2-3 sentence summary. For marketCap, provide a string (e.g., "1.2T"). For any unavailable values, use "N/A". Do not add any explanation, markdown, or formatting.`;
+    const prompt = `Fetch the latest, most up-to-date detailed information for the stock with ticker or company name "${query}" on a ${exchange} exchange using real-time search. Provide the response as a single block of text with key-value pairs separated by ":::". Use "|||" to separate each pair. Keys must be: ticker, name, currentPrice, yearlyDividend, peRatio, forwardPeRatio, fiftyTwoWeekLow, fiftyTwoWeekHigh, companyProfile, marketCap, dividendYield, priceHistory. For companyProfile, provide a brief 2-3 sentence summary. For marketCap, provide a string (e.g., "1.2T"). For priceHistory, provide a semicolon-separated list of date:close pairs for the past 365 days (e.g., 2023-01-01:150.00;2023-01-02:151.25;...). For any unavailable values, use "N/A". Do not add any explanation, markdown, or formatting.`;
 
     try {
         const text = await getGeminiTextResponse(prompt, true);
@@ -72,6 +72,16 @@ export const fetchFullStockData = async (query: string, exchange: Exchange): Pro
             console.error("Failed to parse essential fields from response:", text);
             return null;
         }
+        
+        let priceHistory: TickerPriceHistory[] = [];
+        const historyStr = getStr('pricehistory');
+        if (historyStr) {
+            priceHistory = historyStr.split(';').map(item => {
+                const [date, closeStr] = item.split(':');
+                const close = parseFloat(closeStr);
+                return (date && !isNaN(close)) ? { date, close } : null;
+            }).filter((item): item is TickerPriceHistory => item !== null);
+        }
 
         return {
             ticker: ticker.toUpperCase(),
@@ -85,6 +95,7 @@ export const fetchFullStockData = async (query: string, exchange: Exchange): Pro
             companyProfile: getStr("companyprofile") ?? 'No profile available.',
             marketCap: getStr("marketcap"),
             dividendYield: getNum("dividendyield"),
+            priceHistory,
         };
 
     } catch (error) {
@@ -97,47 +108,76 @@ export const fetchBatchPrices = async (assets: Pick<StockAsset, 'ticker' | 'exch
     if (!isApiKeyConfigured || assets.length === 0) return null;
     
     const assetList = assets.map(a => `${a.ticker} on ${a.exchange} exchange`).join(', ');
-    const prompt = `Fetch the latest stock price for the following assets: ${assetList}. Respond with a JSON array where each object has "ticker" (string), "exchange" (string), and "price" (number). Ensure ticker and exchange in the response match the requested assets exactly. Use real-time search for accuracy.`;
+    const prompt = `Fetch the latest stock price for the following assets: ${assetList}. Respond with a list where each item is "TICKER:::EXCHANGE:::PRICE" and items are separated by "|||". Use real-time search for accuracy. Do not add any explanation, markdown, or formatting. The exchange must be one of 'USA' or 'Canada'.`;
 
     try {
-        return await getGeminiJsonResponse(prompt, {
-            type: Type.ARRAY,
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    ticker: { type: Type.STRING },
-                    exchange: { type: Type.STRING },
-                    price: { type: Type.NUMBER }
-                },
-                required: ["ticker", "exchange", "price"]
+        const text = await getGeminiTextResponse(prompt, true);
+        const updates: { ticker: string; exchange: string; price: number }[] = [];
+        text.split('|||').forEach(item => {
+            const parts = item.split(':::');
+            if (parts.length === 3) {
+                const ticker = parts[0].trim().toUpperCase();
+                const exchange = parts[1].trim();
+                const price = parseFloat(parts[2].trim());
+                
+                const originalAsset = assets.find(a => a.ticker.toUpperCase() === ticker && a.exchange === exchange);
+                if (originalAsset && !isNaN(price)) {
+                     updates.push({ ticker: originalAsset.ticker, exchange: originalAsset.exchange, price });
+                }
             }
-        }, true);
+        });
+        return updates.length > 0 ? updates : null;
     } catch (error) {
         console.error(`Error fetching batch prices:`, error);
         return null;
     }
 };
 
-export const fetchStockMetrics = async (ticker: string, exchange: Exchange): Promise<Partial<StockAsset> | null> => {
+export const fetchStockDetailsForUpdate = async (ticker: string, exchange: Exchange): Promise<Partial<StockAsset> & { priceHistory?: TickerPriceHistory[] } | null> => {
     if (!isApiKeyConfigured) return null;
 
-    const prompt = `Fetch the latest key metrics for the stock with ticker symbol "${ticker}" on a ${exchange} exchange using real-time search. Provide the response as a JSON object with the following keys: "peRatio" (number or null), "forwardPeRatio" (number or null), "fiftyTwoWeekLow" (number or null), "fiftyTwoWeekHigh" (number or null), "marketCap" (string or null), "dividendYield" (number or null), "yearlyDividend" (number or null). For unavailable values, use null.`;
+    const prompt = `Fetch the latest key metrics and price history for the stock with ticker symbol "${ticker}" on a ${exchange} exchange using real-time search. Provide the response as a single block of text with key-value pairs separated by ":::". Use "|||" to separate each pair. Keys must be: peRatio, forwardPeRatio, fiftyTwoWeekLow, fiftyTwoWeekHigh, marketCap, dividendYield, yearlyDividend, priceHistory. For priceHistory, provide a semicolon-separated list of date:close pairs for the past 365 days. For any unavailable values, use "N/A".`;
 
     try {
-        return await getGeminiJsonResponse<Partial<StockAsset>>(prompt, {
-            type: Type.OBJECT,
-            properties: {
-                peRatio: { type: Type.NUMBER },
-                forwardPeRatio: { type: Type.NUMBER },
-                fiftyTwoWeekLow: { type: Type.NUMBER },
-                fiftyTwoWeekHigh: { type: Type.NUMBER },
-                marketCap: { type: Type.STRING },
-                dividendYield: { type: Type.NUMBER },
-                yearlyDividend: { type: Type.NUMBER },
+        const text = await getGeminiTextResponse(prompt, true);
+        const data = new Map<string, string>();
+        text.split('|||').forEach(pair => {
+            const parts = pair.split(':::');
+            if (parts.length === 2) {
+                data.set(parts[0].trim().toLowerCase(), parts[1].trim());
             }
-        }, true);
+        });
+
+        const getStr = (key: string): string | null => data.get(key) && data.get(key)?.toLowerCase() !== 'n/a' ? data.get(key) ?? null : null;
+        const getNum = (key: string): number | null => {
+            const val = data.get(key);
+            if (!val || val.toLowerCase() === 'n/a') return null;
+            const num = parseFloat(val.replace(/,/g, ''));
+            return isNaN(num) ? null : num;
+        };
+
+        let priceHistory: TickerPriceHistory[] = [];
+        const historyStr = getStr('pricehistory');
+        if (historyStr) {
+            priceHistory = historyStr.split(';').map(item => {
+                const [date, closeStr] = item.split(':');
+                const close = parseFloat(closeStr);
+                return (date && !isNaN(close)) ? { date, close } : null;
+            }).filter((item): item is TickerPriceHistory => item !== null);
+        }
+
+        return {
+            peRatio: getNum("peratio"),
+            forwardPeRatio: getNum("forwardperatio"),
+            fiftyTwoWeekLow: getNum("fiftytwoweeklow"),
+            fiftyTwoWeekHigh: getNum("fiftytwoweekhigh"),
+            marketCap: getStr("marketcap"),
+            dividendYield: getNum("dividendyield"),
+            yearlyDividend: getNum("yearlydividend"),
+            priceHistory,
+        };
     } catch (error) {
-        console.error(`Error fetching metrics for ${ticker}:`, error);
+        console.error(`Error fetching details for update for ${ticker}:`, error);
         return null;
     }
 };

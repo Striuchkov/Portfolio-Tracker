@@ -58,6 +58,7 @@ export interface StockAsset extends BaseAsset {
   dividendYield: number | null;
   lastPriceUpdate: number; // timestamp
   lastMetricsUpdate: number; // timestamp
+  priceHistory?: TickerPriceHistory[];
 }
 
 export interface CashAsset extends BaseAsset {

@@ -7,7 +7,7 @@ import { formatCurrency, formatPercentage, formatNumber } from '../utils/formatt
 interface AssetListProps {
     assets: Asset[];
     removeAsset: (id: string) => void;
-    refreshAssetMetrics: (asset: Asset) => void;
+    refreshAssetDetails: (asset: Asset) => void;
 }
 
 const ChevronDownIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
@@ -27,7 +27,7 @@ const DataPoint: React.FC<{ label: string; value: string | number | null | undef
 };
 
 
-const StockAssetItem: React.FC<{ asset: StockAsset, removeAsset: (id: string) => void, refreshAssetMetrics: (asset: Asset) => void }> = ({ asset, removeAsset, refreshAssetMetrics }) => {
+const StockAssetItem: React.FC<{ asset: StockAsset, removeAsset: (id: string) => void, refreshAssetDetails: (asset: Asset) => void }> = ({ asset, removeAsset, refreshAssetDetails }) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const marketValue = asset.shares * asset.currentPrice;
     const totalCost = asset.shares * asset.avgCost;
@@ -60,7 +60,7 @@ const StockAssetItem: React.FC<{ asset: StockAsset, removeAsset: (id: string) =>
                 </td>
                 <td className="p-4 align-top">
                     <div className="flex items-center justify-end space-x-2">
-                        <button onClick={(e) => { e.stopPropagation(); refreshAssetMetrics(asset); }} className="p-2 text-gray-400 hover:text-white transition-colors" aria-label="Refresh asset metrics">
+                        <button onClick={(e) => { e.stopPropagation(); refreshAssetDetails(asset); }} className="p-2 text-gray-400 hover:text-white transition-colors" aria-label="Refresh asset metrics">
                             <RefreshIcon className="h-5 w-5" />
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); removeAsset(asset.id); }} className="p-2 text-gray-400 hover:text-negative transition-colors" aria-label="Remove asset">
@@ -114,7 +114,7 @@ const CashAssetItem: React.FC<{ asset: Extract<Asset, {type: AssetType.Cash}>, r
     );
 };
 
-const AssetList: React.FC<AssetListProps> = ({ assets, removeAsset, refreshAssetMetrics }) => {
+const AssetList: React.FC<AssetListProps> = ({ assets, removeAsset, refreshAssetDetails }) => {
     if (assets.length === 0) {
         return (
             <div className="bg-gray-800 p-8 rounded-xl text-center shadow-inner">
@@ -150,7 +150,7 @@ const AssetList: React.FC<AssetListProps> = ({ assets, removeAsset, refreshAsset
                     <tbody>
                         {sortedAssets.map(asset => {
                             if (asset.type === AssetType.Stock) {
-                                return <StockAssetItem key={asset.id} asset={asset} removeAsset={removeAsset} refreshAssetMetrics={refreshAssetMetrics} />;
+                                return <StockAssetItem key={asset.id} asset={asset} removeAsset={removeAsset} refreshAssetDetails={refreshAssetDetails} />;
                             } else {
                                 return <CashAssetItem key={asset.id} asset={asset} removeAsset={removeAsset} />;
                             }
