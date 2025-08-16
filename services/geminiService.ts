@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { Exchange, StockAsset, TickerDetails, TickerNews, TickerPriceHistory, TimeRange } from "../types";
+import { Exchange, StockAsset, TickerDetails, TickerNews, PriceDataPoint, TimeRange } from "../types";
 
 export const isApiKeyConfigured = !!process.env.API_KEY;
 
@@ -45,10 +45,27 @@ const getGeminiJsonResponse = async <T>(prompt: string, schema: any, useSearch: 
     return JSON.parse(jsonText) as T;
 };
 
+const parseOhlcvHistory = (historyStr: string | null): PriceDataPoint[] => {
+    if (!historyStr) return [];
+    return historyStr.split(';').map(item => {
+        const parts = item.split(':');
+        if (parts.length < 6) return null;
+        const volume = parseInt(parts[parts.length - 1], 10);
+        const close = parseFloat(parts[parts.length - 2]);
+        const low = parseFloat(parts[parts.length - 3]);
+        const high = parseFloat(parts[parts.length - 4]);
+        const open = parseFloat(parts[parts.length - 5]);
+        const date = parts.slice(0, parts.length - 5).join(':');
 
-export const fetchFullStockData = async (query: string, exchange: Exchange): Promise<Partial<StockAsset> & { priceHistory?: TickerPriceHistory[] } | null> => {
+        return (date && !isNaN(open) && !isNaN(high) && !isNaN(low) && !isNaN(close) && !isNaN(volume))
+            ? { date: date.trim(), open, high, low, close, volume } : null;
+    }).filter((item): item is PriceDataPoint => item !== null);
+};
+
+
+export const fetchFullStockData = async (query: string, exchange: Exchange): Promise<Partial<StockAsset> & { priceHistory?: PriceDataPoint[] } | null> => {
     if (!isApiKeyConfigured) return null;
-    const prompt = `Fetch the latest, most up-to-date detailed information for the stock with ticker or company name "${query}" on a ${exchange} exchange using real-time search. Provide the response as a single block of text with key-value pairs separated by ":::". Use "|||" to separate each pair. Keys must be: ticker, name, currentPrice, yearlyDividend, peRatio, forwardPeRatio, fiftyTwoWeekLow, fiftyTwoWeekHigh, companyProfile, marketCap, dividendYield, priceHistory. For companyProfile, provide a brief 2-3 sentence summary. For marketCap, provide a string (e.g., "1.2T"). For priceHistory, provide a semicolon-separated list of date:close pairs for the past 365 days (e.g., 2023-01-01:150.00;2023-01-02:151.25;...). For any unavailable values, use "N/A". Do not add any explanation, markdown, or formatting.`;
+    const prompt = `Fetch the latest, most up-to-date detailed information for the stock with ticker or company name "${query}" on a ${exchange} exchange using real-time search. Provide the response as a single block of text with key-value pairs separated by ":::". Use "|||" to separate each pair. Keys must be: ticker, name, currentPrice, yearlyDividend, peRatio, forwardPeRatio, fiftyTwoWeekLow, fiftyTwoWeekHigh, companyProfile, marketCap, dividendYield, priceHistory. For companyProfile, provide a brief 2-3 sentence summary. For marketCap, provide a string (e.g., "1.2T"). For priceHistory, provide a semicolon-separated list of date:open:high:low:close:volume for the past 365 days (e.g., 2023-01-01:150:152:149:151:1000000;...). For any unavailable values, use "N/A". Do not add any explanation, markdown, or formatting.`;
 
     try {
         const text = await getGeminiTextResponse(prompt, true);
@@ -77,15 +94,7 @@ export const fetchFullStockData = async (query: string, exchange: Exchange): Pro
             return null;
         }
         
-        let priceHistory: TickerPriceHistory[] = [];
-        const historyStr = getStr('pricehistory');
-        if (historyStr) {
-            priceHistory = historyStr.split(';').map(item => {
-                const [date, closeStr] = item.split(':');
-                const close = parseFloat(closeStr);
-                return (date && !isNaN(close)) ? { date, close } : null;
-            }).filter((item): item is TickerPriceHistory => item !== null);
-        }
+        const priceHistory = parseOhlcvHistory(getStr('pricehistory'));
 
         return {
             ticker: ticker.toUpperCase(),
@@ -137,10 +146,10 @@ export const fetchBatchPrices = async (assets: Pick<StockAsset, 'ticker' | 'exch
     }
 };
 
-export const fetchStockDetailsForUpdate = async (ticker: string, exchange: Exchange): Promise<Partial<StockAsset> & { priceHistory?: TickerPriceHistory[] } | null> => {
+export const fetchStockDetailsForUpdate = async (ticker: string, exchange: Exchange): Promise<Partial<StockAsset> & { priceHistory?: PriceDataPoint[] } | null> => {
     if (!isApiKeyConfigured) return null;
 
-    const prompt = `Fetch the latest key metrics and price history for the stock with ticker symbol "${ticker}" on a ${exchange} exchange using real-time search. Provide the response as a single block of text with key-value pairs separated by ":::". Use "|||" to separate each pair. Keys must be: peRatio, forwardPeRatio, fiftyTwoWeekLow, fiftyTwoWeekHigh, marketCap, dividendYield, yearlyDividend, priceHistory. For priceHistory, provide a semicolon-separated list of date:close pairs for the past 365 days. For any unavailable values, use "N/A".`;
+    const prompt = `Fetch the latest key metrics and price history for the stock with ticker symbol "${ticker}" on a ${exchange} exchange using real-time search. Provide the response as a single block of text with key-value pairs separated by ":::". Use "|||" to separate each pair. Keys must be: peRatio, forwardPeRatio, fiftyTwoWeekLow, fiftyTwoWeekHigh, marketCap, dividendYield, yearlyDividend, priceHistory. For priceHistory, provide a semicolon-separated list of date:open:high:low:close:volume for the past 365 days. For any unavailable values, use "N/A".`;
 
     try {
         const text = await getGeminiTextResponse(prompt, true);
@@ -159,16 +168,8 @@ export const fetchStockDetailsForUpdate = async (ticker: string, exchange: Excha
             const num = parseFloat(val.replace(/,/g, ''));
             return isNaN(num) ? null : num;
         };
-
-        let priceHistory: TickerPriceHistory[] = [];
-        const historyStr = getStr('pricehistory');
-        if (historyStr) {
-            priceHistory = historyStr.split(';').map(item => {
-                const [date, closeStr] = item.split(':');
-                const close = parseFloat(closeStr);
-                return (date && !isNaN(close)) ? { date, close } : null;
-            }).filter((item): item is TickerPriceHistory => item !== null);
-        }
+        
+        const priceHistory = parseOhlcvHistory(getStr('pricehistory'));
 
         return {
             peRatio: getNum("peratio"),
@@ -193,7 +194,7 @@ export const fetchTickerDetails = async (ticker: string, exchange: Exchange): Pr
     const prompt = `Fetch the latest, most up-to-date detailed information for the stock with ticker symbol "${ticker}" on a ${exchange} exchange using real-time search. Provide the response as a single block of text with key-value pairs separated by ":::". Use "|||" to separate each pair. Keys must be: name, companyProfile, currentPrice, dayChange, dayChangePercent, marketCap, peRatio, dividendYield, fiftyTwoWeekLow, fiftyTwoWeekHigh, and priceHistory.
 - companyProfile should be a brief 2-3 sentence summary.
 - marketCap should be a string (e.g., "1.2T", "250B", "50M").
-- For priceHistory, provide a semicolon-separated list of date:close pairs for the past 365 days (e.g., 2023-01-01:150.00;2023-01-02:151.25;...).
+- For priceHistory, provide a semicolon-separated list of date:open:high:low:close:volume pairs for the past 365 days (e.g., 2023-01-01:150:152:149:151:1000000;...).
 - For any unavailable values, use "N/A".
 - Do not add any explanation, markdown, or formatting.`;
 
@@ -216,15 +217,7 @@ export const fetchTickerDetails = async (ticker: string, exchange: Exchange): Pr
             return isNaN(num) ? null : num;
         };
 
-        let priceHistory: TickerPriceHistory[] = [];
-        const historyStr = getStr('priceHistory');
-        if (historyStr) {
-            priceHistory = historyStr.split(';').map(item => {
-                const [date, closeStr] = item.split(':');
-                const close = parseFloat(closeStr);
-                return (date && !isNaN(close)) ? { date, close } : null;
-            }).filter((item): item is TickerPriceHistory => item !== null);
-        }
+        const priceHistory = parseOhlcvHistory(getStr('priceHistory'));
 
         return {
             name: getStr('name') ?? 'N/A',
@@ -270,24 +263,25 @@ export const fetchTickerNews = async (ticker: string, exchange: Exchange): Promi
     }
 };
 
-export const fetchPriceHistory = async (ticker: string, exchange: Exchange, range: TimeRange): Promise<TickerPriceHistory[] | null> => {
+export const fetchPriceHistory = async (ticker: string, exchange: Exchange, range: TimeRange): Promise<PriceDataPoint[] | null> => {
     if (!isApiKeyConfigured) return null;
 
     let promptRangeText = '';
-    let promptIntervalText = 'daily closing prices';
-    let responseFormat = 'a semicolon-separated list of date:close pairs (e.g., 2023-01-01:150.00;2023-01-02:151.25;...)';
+    let promptIntervalText = 'daily OHLCV (open, high, low, close, volume) data';
+    let responseFormat = `a semicolon-separated list of records. Each record must be in the format: 'date:open:high:low:close:volume'. Example: '2023-01-01:150:152:149:151:1000000'`;
     let useSearch = false;
 
     switch (range) {
         case '1D':
             promptRangeText = 'for today';
-            promptIntervalText = 'intraday prices at 15-minute intervals';
-            responseFormat = 'a semicolon-separated list of time:price pairs (e.g., "09:30:00:150.00;09:45:00:151.25;...")';
-            useSearch = true;
+            promptIntervalText = 'intraday OHLCV data at 15-minute intervals';
+            responseFormat = `a semicolon-separated list of records. Each record must be in the format: 'time:open:high:low:close:volume'. Example: '09:30:00:150:151:149.5:150.5:50000'`;
+            useSearch = true; // Intraday data MUST use search to be accurate and available.
             break;
         case '5D':
-            promptRangeText = 'for the last 5 days';
-            useSearch = true;
+            promptRangeText = 'for the last 5 trading days';
+            promptIntervalText = 'daily OHLCV data';
+            useSearch = true; // Use search for recent daily data
             break;
         case '1M':
             promptRangeText = 'for the last 1 month';
@@ -303,22 +297,16 @@ export const fetchPriceHistory = async (ticker: string, exchange: Exchange, rang
             break;
     }
 
-    const prompt = `Provide the price history for the stock with ticker "${ticker}" on a ${exchange} exchange ${promptRangeText}. Provide ${promptIntervalText}. The response must be a single block of text containing ${responseFormat}. Do not add any explanation, markdown, or formatting.`;
+    const prompt = `Provide the historical price data for the stock with ticker "${ticker}" on a ${exchange} exchange ${promptRangeText}.
+Data should include ${promptIntervalText}.
+The response MUST be a single block of text containing ${responseFormat}.
+Do not add any explanation, markdown, or other formatting.`;
 
     try {
         const text = await getGeminiTextResponse(prompt, useSearch);
         if (!text || text.trim() === '') return [];
-
-        const history = text.split(';').map(item => {
-            const parts = item.split(':');
-            if (parts.length < 2) return null;
-            const dateOrTime = parts.slice(0, -1).join(':'); // Handle HH:MM:SS format
-            const closeStr = parts[parts.length - 1];
-            const close = parseFloat(closeStr);
-            return (dateOrTime && !isNaN(close)) ? { date: dateOrTime.trim(), close } : null;
-        }).filter((item): item is TickerPriceHistory => item !== null);
-
-        return history;
+        
+        return parseOhlcvHistory(text);
 
     } catch (error) {
         console.error(`Error fetching ${range} price history for ${ticker}:`, error);
@@ -326,24 +314,29 @@ export const fetchPriceHistory = async (ticker: string, exchange: Exchange, rang
     }
 };
 
-export const generatePriceChartSvg = async (priceHistory: TickerPriceHistory[], ticker: string, range: TimeRange): Promise<string | null> => {
-    if (!isApiKeyConfigured || priceHistory.length < 2) return null;
+export const generateCandlestickChartSvg = async (priceHistory: PriceDataPoint[], ticker: string): Promise<string | null> => {
+    if (!isApiKeyConfigured || priceHistory.length < 1) return null;
 
-    const dataPoints = priceHistory.map(p => `${p.date},${p.close}`).join(';');
-    const latestPrice = priceHistory[priceHistory.length - 1].close;
-    const oldestPrice = priceHistory[0].close;
-    const trendColor = latestPrice >= oldestPrice ? '#10B981' : '#EF4444';
-    const dataFormatString = range === '1D' ? 'HH:MM:SS,price' : 'YYYY-MM-DD,close_price';
-
+    const dataPoints = priceHistory.map(p => `${p.date},${p.open},${p.high},${p.low},${p.close},${p.volume}`).join(';');
+    
     const prompt = `
-    Generate an SVG for a financial price chart for the ticker ${ticker} with the following specifications:
-    - The SVG should be responsive with a viewBox="0 0 400 200". Do not set a fixed width or height.
-    - The background should be transparent.
-    - The data points are in '${dataFormatString}' format, separated by semicolons: ${dataPoints}
-    - The line color for the price chart must be '${trendColor}'.
-    - Add a subtle grid with 4 horizontal lines. Grid lines should be a light gray color like '#2D2D2D'.
-    - Do not include any axis labels, titles, or legends inside the SVG. Just the line chart and grid.
-    - The line should be smooth (use curves). The line stroke width should be 2.
+    Generate an SVG for a financial candlestick chart for the ticker ${ticker} with volume bars, with the following specifications:
+    - The SVG must be responsive with a viewBox="0 0 400 300". Do not set fixed width or height.
+    - The background must be transparent.
+    - The data points are in 'date_or_time,open,high,low,close,volume' format, separated by semicolons: ${dataPoints}
+    - The chart area should be split: top 70% for candlesticks, bottom 25% for volume bars, with a 5% gap in between.
+    - Candlesticks:
+      - If close >= open, the candle body should be filled with green ('#10B981').
+      - If close < open, the candle body should be filled with red ('#EF4444').
+      - Wicks (the lines for high/low) should be the same color as the candle body.
+    - Volume Bars:
+      - Bars should be positioned directly below their corresponding candlestick.
+      - The color of the volume bar must match the color of its corresponding candlestick (green for up days, red for down days).
+      - The height of each volume bar should be proportional to its volume relative to the maximum volume in the dataset.
+    - Grid:
+      - Add a subtle grid with 4 horizontal lines in the candlestick chart area.
+      - Grid lines should be a light gray color like '#2D2D2D'.
+    - Do not include any axis labels, titles, or legends inside the SVG.
     - The SVG must be a single block of valid XML, starting with <svg> and ending with </svg>. Do not include any other text or markdown formatting.
     `;
 

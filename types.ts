@@ -39,6 +39,15 @@ interface BaseAsset {
   accountId: string;
 }
 
+export interface PriceDataPoint {
+    date: string; // YYYY-MM-DD or HH:MM for intraday
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+}
+
 export interface StockAsset extends BaseAsset {
   type: AssetType.Stock;
   ticker: string;
@@ -58,7 +67,7 @@ export interface StockAsset extends BaseAsset {
   dividendYield: number | null;
   lastPriceUpdate: number; // timestamp
   lastMetricsUpdate: number; // timestamp
-  priceHistory?: TickerPriceHistory[];
+  priceHistory?: PriceDataPoint[];
 }
 
 export interface CashAsset extends BaseAsset {
@@ -88,11 +97,6 @@ export interface TickerNews {
     publishedAt: string; // e.g. "2 hours ago", "2024-07-28"
 }
 
-export interface TickerPriceHistory {
-    date: string; // YYYY-MM-DD or HH:MM:SS for intraday
-    close: number;
-}
-
 export interface TickerDetails {
     name: string;
     companyProfile: string;
@@ -101,7 +105,7 @@ export interface TickerDetails {
     dividendYield: number | null;
     fiftyTwoWeekLow: number | null;
     fiftyTwoWeekHigh: number | null;
-    priceHistory: TickerPriceHistory[];
+    priceHistory: PriceDataPoint[];
     dayChange: number | null;
     dayChangePercent: number | null;
     currentPrice: number;

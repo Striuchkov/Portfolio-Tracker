@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Exchange, TickerDetails, TickerNews, StockAsset, TickerPriceHistory, TimeRange } from '../types';
-import { fetchTickerDetails, fetchTickerNews, generatePriceChartSvg, fetchPriceHistory } from '../services/geminiService';
+import { Exchange, TickerDetails, TickerNews, StockAsset, PriceDataPoint, TimeRange } from '../types';
+import { fetchTickerDetails, fetchTickerNews, generateCandlestickChartSvg, fetchPriceHistory } from '../services/geminiService';
 import { SpinnerIcon } from './icons/SpinnerIcon';
 import { ArrowLeftIcon } from './icons/ArrowLeftIcon';
 import { formatCurrency, formatPercentage } from '../utils/formatting';
@@ -36,7 +36,7 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
 
     // Chart-specific state
     const [timeRange, setTimeRange] = useState<TimeRange>('1Y');
-    const [currentChartHistory, setCurrentChartHistory] = useState<TickerPriceHistory[] | null>(null);
+    const [currentChartHistory, setCurrentChartHistory] = useState<PriceDataPoint[] | null>(null);
     const [isChartLoading, setIsChartLoading] = useState<boolean>(false);
 
 
@@ -112,8 +112,8 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
                     const history = await fetchPriceHistory(ticker, exchange, timeRange);
                     setCurrentChartHistory(history ?? []);
                 }
-            } catch (err) {
-                console.error(`Failed to fetch price history for ${timeRange}:`, err);
+            } catch (err: any) {
+                setError(err.message); // Show error on the page
                 setCurrentChartHistory(null);
             } finally {
                 setIsChartLoading(false);
@@ -130,28 +130,39 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
         
         const sourceData = isPortfolioAsset ? asset : details;
         if (currentChartHistory && currentChartHistory.length > 0 && sourceData) {
-            let historyForSvg = [...currentChartHistory];
+            let historyForSvg = JSON.parse(JSON.stringify(currentChartHistory)); // Deep copy to prevent state mutation
 
-            // For non-intraday charts, update/add today's price for a "live" feel
-            if (timeRange !== '1D') {
+            // For portfolio assets on daily charts, update the latest candle with the live price
+            if (isPortfolioAsset && asset && timeRange !== '1D' && historyForSvg.length > 0) {
                 const today = new Date().toISOString().split('T')[0];
-                if (historyForSvg.length > 0) {
-                    const lastPoint = historyForSvg[historyForSvg.length - 1];
-                    if (lastPoint.date === today) {
-                        lastPoint.close = sourceData.currentPrice; // Update today's price
+                const lastPoint = historyForSvg[historyForSvg.length - 1];
+
+                // If the last data point is from today, update it
+                if (lastPoint && (lastPoint.date === today || new Date(lastPoint.date) < new Date(today))) {
+                     if(lastPoint.date !== today) {
+                        // If last point is old, add a new one for today using yesterday's close as O, H, L
+                        historyForSvg.push({
+                            date: today,
+                            open: lastPoint.close,
+                            high: Math.max(lastPoint.close, asset.currentPrice),
+                            low: Math.min(lastPoint.close, asset.currentPrice),
+                            close: asset.currentPrice,
+                            volume: 0 // We don't have live volume
+                        });
                     } else {
-                        historyForSvg.push({ date: today, close: sourceData.currentPrice }); // Add today's price
+                        // It is today, so update it
+                        lastPoint.close = asset.currentPrice;
+                        lastPoint.high = Math.max(lastPoint.high, asset.currentPrice);
+                        lastPoint.low = Math.min(lastPoint.low, asset.currentPrice);
                     }
-                } else {
-                    historyForSvg.push({ date: today, close: sourceData.currentPrice });
                 }
             }
             
-            generatePriceChartSvg(historyForSvg, ticker, timeRange).then(setChartSvg);
+            generateCandlestickChartSvg(historyForSvg, ticker).then(setChartSvg);
         } else {
              setChartSvg(null);
         }
-    }, [currentChartHistory, isChartLoading, ticker, timeRange, asset, details, isPortfolioAsset]);
+    }, [currentChartHistory, isChartLoading, ticker, asset, details, isPortfolioAsset, timeRange]);
 
 
     const displayData = useMemo<TickerDetails | null>(() => {
@@ -190,9 +201,9 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
     };
     
     const dayChangeColor = useMemo(() => {
-        if (!displayData || displayData.dayChange === null) return 'text-gray-400';
-        return displayData.dayChange >= 0 ? 'text-positive' : 'text-negative';
-    }, [displayData]);
+        if (!details || details.dayChange === null) return 'text-gray-400';
+        return details.dayChange >= 0 ? 'text-positive' : 'text-negative';
+    }, [details]);
 
     const TimeRangeSelector: React.FC = () => {
         const ranges: TimeRange[] = ['1D', '5D', '1M', '1Y', '5Y', '10Y'];
@@ -223,7 +234,7 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
         );
     }
     
-    if (error) {
+    if (error && !displayData) { // Only show full-page error if we have no data at all
          return (
             <div className="container mx-auto p-4 md:p-8 text-center">
                  <a href="/#" className="inline-flex items-center gap-2 text-primary hover:underline mb-8">
@@ -253,6 +264,8 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
         );
     }
 
+    const currentPriceData = isPortfolioAsset && asset ? asset : details;
+
     return (
         <main className="container mx-auto p-4 md:p-8 animate-fade-in">
             <div className="mb-8">
@@ -270,11 +283,11 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
                         <h1 className="text-3xl md:text-4xl font-bold text-white">{displayData.name}</h1>
                         <p className="text-lg text-gray-400 mt-1">{ticker} &middot; {exchange}</p>
                         <div className="flex items-end gap-4 mt-4">
-                            <p className="text-4xl md:text-5xl font-bold text-white">{formatCurrency(displayData.currentPrice)}</p>
-                            {displayData.dayChange !== null && (
+                            <p className="text-4xl md:text-5xl font-bold text-white">{formatCurrency(currentPriceData.currentPrice)}</p>
+                            {!isPortfolioAsset && details && details.dayChange !== null && (
                                 <div className={`text-xl font-semibold ${dayChangeColor}`}>
-                                   <span>{displayData.dayChange > 0 ? '+' : ''}{formatCurrency(displayData.dayChange)}</span>
-                                   <span className="ml-2">({displayData.dayChangePercent !== null && displayData.dayChangePercent > 0 ? '+' : ''}{formatPercentage(displayData.dayChangePercent ?? 0)})</span>
+                                   <span>{details.dayChange > 0 ? '+' : ''}{formatCurrency(details.dayChange)}</span>
+                                   <span className="ml-2">({details.dayChangePercent !== null && details.dayChangePercent > 0 ? '+' : ''}{formatPercentage(details.dayChangePercent ?? 0)})</span>
                                 </div>
                             )}
                         </div>
@@ -286,7 +299,7 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
                              <h2 className="text-xl font-bold text-white">Price History</h2>
                              <TimeRangeSelector />
                         </div>
-                        <div className="h-[300px] flex items-center justify-center">
+                        <div className="h-[400px] flex items-center justify-center">
                             {isChartLoading ? (
                                 <div className="text-center">
                                     <SpinnerIcon className="animate-spin h-8 w-8 text-primary mx-auto" />
@@ -296,7 +309,8 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
                                 <div className="w-full h-full" dangerouslySetInnerHTML={{ __html: chartSvg }} />
                             ) : (
                                 <div className="text-center text-gray-400">
-                                    <p>No price history available for this range.</p>
+                                    <p>{error ? error : 'No price history available for this range.'}</p>
+                                    {error && <button onClick={() => setTimeRange(t => t)} className="mt-2 text-sm text-primary hover:underline">Try again</button>}
                                 </div>
                             )}
                         </div>
@@ -326,42 +340,4 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
                         {!news && !isNewsLoading && !newsError && (
                             <button
                                 onClick={handleLoadNews}
-                                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-primary disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
-                            >
-                                Load Recent News
-                            </button>
-                        )}
-                        {isNewsLoading && (
-                            <div className="text-center py-4">
-                                <SpinnerIcon className="animate-spin h-8 w-8 text-primary mx-auto" />
-                                <p className="text-gray-400 mt-2">Fetching news...</p>
-                            </div>
-                        )}
-                        {newsError && (
-                            <div className="text-center py-4 text-negative">
-                                <p>{newsError}</p>
-                                <button onClick={handleLoadNews} className="mt-2 text-sm text-primary hover:underline">Try again</button>
-                            </div>
-                        )}
-                        {news && (
-                             <ul className="space-y-4">
-                                {news.length > 0 ? news.map((item, index) => (
-                                    <li key={index} className="border-b border-gray-700 pb-4 last:border-b-0 last:pb-0">
-                                        <a href={item.url ?? '#'} target="_blank" rel="noopener noreferrer" className="font-semibold text-white hover:text-primary transition-colors block">
-                                            {item.title}
-                                        </a>
-                                        <div className="text-xs text-gray-400 mt-1">
-                                            <span>{item.source} &middot; {item.publishedAt}</span>
-                                        </div>
-                                    </li>
-                                )) : <p className="text-gray-400">No recent news found.</p>}
-                            </ul>
-                        )}
-                    </div>
-                </div>
-            </div>
-        </main>
-    );
-};
-
-export default TickerPage;
+                                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-primary disabled:bg-gray-600 disabled:
