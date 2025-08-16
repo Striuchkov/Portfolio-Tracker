@@ -29,7 +29,7 @@ const Header: React.FC<HeaderProps> = ({ user, onOpenProfile }) => {
                     <div className="flex items-center">
                         <ChartPieIcon className="h-8 w-8 text-primary" />
                         <h1 className="text-2xl font-bold ml-3 tracking-tight text-white">
-                            Gemini Portfolio Tracker
+                            Mave Portfolio Tracker
                         </h1>
                     </div>
                     {user && (
