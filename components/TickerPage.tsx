@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Exchange, TickerDetails, TickerNews, StockAsset, TickerPriceHistory } from '../types';
-import { fetchTickerDetails, fetchTickerNews, generatePriceChartSvg } from '../services/geminiService';
+import { Exchange, TickerDetails, TickerNews, StockAsset, TickerPriceHistory, TimeRange } from '../types';
+import { fetchTickerDetails, fetchTickerNews, generatePriceChartSvg, fetchPriceHistory } from '../services/geminiService';
 import { SpinnerIcon } from './icons/SpinnerIcon';
 import { ArrowLeftIcon } from './icons/ArrowLeftIcon';
 import { formatCurrency, formatPercentage } from '../utils/formatting';
@@ -29,10 +29,16 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
     const [chartSvg, setChartSvg] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
-
+    
     const [news, setNews] = useState<TickerNews[] | null>(null);
     const [isNewsLoading, setIsNewsLoading] = useState<boolean>(false);
     const [newsError, setNewsError] = useState<string | null>(null);
+
+    // Chart-specific state
+    const [timeRange, setTimeRange] = useState<TimeRange>('1Y');
+    const [currentChartHistory, setCurrentChartHistory] = useState<TickerPriceHistory[] | null>(null);
+    const [isChartLoading, setIsChartLoading] = useState<boolean>(false);
+
 
     const loadLiveTickerData = async () => {
         try {
@@ -49,14 +55,20 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
         }
     };
 
+    // Main data loading effect, runs when ticker/exchange changes
     useEffect(() => {
+        // Reset all state for the new ticker
         setAsset(null);
         setDetails(null);
         setChartSvg(null);
+        setCurrentChartHistory(null);
+        setTimeRange('1Y');
         setIsLoading(true);
         setError(null);
         setNews(null);
         setNewsError(null);
+        setIsNewsLoading(false);
+        setIsChartLoading(true);
 
         const currentUser = auth.currentUser;
         if (!currentUser) {
@@ -85,27 +97,62 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
         return () => unsubscribe();
     }, [ticker, exchange]);
 
+    // Effect for fetching price history based on the selected time range
     useEffect(() => {
         const sourceData = isPortfolioAsset ? asset : details;
-        if (sourceData && sourceData.priceHistory && sourceData.currentPrice) {
-            const history = sourceData.priceHistory as TickerPriceHistory[];
-            const liveHistory = [...history];
-            const today = new Date().toISOString().split('T')[0];
-            
-            if (liveHistory.length > 0) {
-                const lastPoint = liveHistory[liveHistory.length - 1];
-                if (lastPoint.date === today) {
-                    lastPoint.close = sourceData.currentPrice;
-                } else {
-                    liveHistory.push({ date: today, close: sourceData.currentPrice });
-                }
-            } else {
-                 liveHistory.push({ date: today, close: sourceData.currentPrice });
-            }
+        if (!sourceData) return;
 
-            generatePriceChartSvg(liveHistory, ticker).then(setChartSvg);
+        const fetchHistory = async () => {
+            setIsChartLoading(true);
+            setChartSvg(null);
+            try {
+                if (timeRange === '1Y' && sourceData.priceHistory && sourceData.priceHistory.length > 0) {
+                    setCurrentChartHistory(sourceData.priceHistory);
+                } else {
+                    const history = await fetchPriceHistory(ticker, exchange, timeRange);
+                    setCurrentChartHistory(history ?? []);
+                }
+            } catch (err) {
+                console.error(`Failed to fetch price history for ${timeRange}:`, err);
+                setCurrentChartHistory(null);
+            } finally {
+                setIsChartLoading(false);
+            }
+        };
+
+        fetchHistory();
+    }, [timeRange, asset, details]);
+
+
+    // Effect for generating the SVG chart when its data changes
+    useEffect(() => {
+        if (isChartLoading) return;
+        
+        const sourceData = isPortfolioAsset ? asset : details;
+        if (currentChartHistory && currentChartHistory.length > 0 && sourceData) {
+            let historyForSvg = [...currentChartHistory];
+
+            // For non-intraday charts, update/add today's price for a "live" feel
+            if (timeRange !== '1D') {
+                const today = new Date().toISOString().split('T')[0];
+                if (historyForSvg.length > 0) {
+                    const lastPoint = historyForSvg[historyForSvg.length - 1];
+                    if (lastPoint.date === today) {
+                        lastPoint.close = sourceData.currentPrice; // Update today's price
+                    } else {
+                        historyForSvg.push({ date: today, close: sourceData.currentPrice }); // Add today's price
+                    }
+                } else {
+                    historyForSvg.push({ date: today, close: sourceData.currentPrice });
+                }
+            }
+            
+            generatePriceChartSvg(historyForSvg, ticker, timeRange).then(setChartSvg);
+        } else {
+             setChartSvg(null);
         }
-    }, [asset, details, isPortfolioAsset, ticker]);
+    }, [currentChartHistory, isChartLoading, ticker, timeRange, asset, details, isPortfolioAsset]);
+
 
     const displayData = useMemo<TickerDetails | null>(() => {
         if (isPortfolioAsset && asset) {
@@ -118,7 +165,7 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
                 fiftyTwoWeekLow: asset.fiftyTwoWeekLow,
                 fiftyTwoWeekHigh: asset.fiftyTwoWeekHigh,
                 priceHistory: asset.priceHistory ?? [],
-                dayChange: null, // Not tracked in real-time for portfolio assets to simplify
+                dayChange: null,
                 dayChangePercent: null,
                 currentPrice: asset.currentPrice,
             };
@@ -147,6 +194,25 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
         return displayData.dayChange >= 0 ? 'text-positive' : 'text-negative';
     }, [displayData]);
 
+    const TimeRangeSelector: React.FC = () => {
+        const ranges: TimeRange[] = ['1D', '5D', '1M', '1Y', '5Y', '10Y'];
+        return (
+            <div className="flex space-x-1 bg-gray-700/50 p-1 rounded-lg">
+                {ranges.map(range => (
+                    <button
+                        key={range}
+                        onClick={() => setTimeRange(range)}
+                        disabled={isChartLoading}
+                        className={`w-full py-2 px-3 text-xs font-bold rounded-md focus:outline-none transition-all duration-200 ease-in-out
+                            ${timeRange === range ? 'bg-primary text-white shadow' : 'text-gray-300 hover:bg-gray-600/50 disabled:text-gray-500 disabled:hover:bg-transparent'}
+                        `}
+                    >
+                        {range}
+                    </button>
+                ))}
+            </div>
+        );
+    };
 
     if (isLoading) {
         return (
@@ -216,14 +282,21 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
 
                     {/* Chart */}
                     <div className="bg-gray-800 p-6 rounded-xl">
-                        <h2 className="text-xl font-bold text-white mb-4">Price History (1Y)</h2>
+                        <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-4">
+                             <h2 className="text-xl font-bold text-white">Price History</h2>
+                             <TimeRangeSelector />
+                        </div>
                         <div className="h-[300px] flex items-center justify-center">
-                            {chartSvg ? (
-                                <div className="w-full h-full" dangerouslySetInnerHTML={{ __html: chartSvg }} />
-                            ) : (
+                            {isChartLoading ? (
                                 <div className="text-center">
                                     <SpinnerIcon className="animate-spin h-8 w-8 text-primary mx-auto" />
-                                    <p className="text-gray-400 mt-2">Generating price chart...</p>
+                                    <p className="text-gray-400 mt-2">Loading chart data...</p>
+                                </div>
+                            ) : chartSvg ? (
+                                <div className="w-full h-full" dangerouslySetInnerHTML={{ __html: chartSvg }} />
+                            ) : (
+                                <div className="text-center text-gray-400">
+                                    <p>No price history available for this range.</p>
                                 </div>
                             )}
                         </div>

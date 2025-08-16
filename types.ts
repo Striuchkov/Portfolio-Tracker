@@ -79,6 +79,8 @@ export interface PortfolioSummaryData {
   overallReturn: number;
 }
 
+export type TimeRange = '1D' | '5D' | '1M' | '1Y' | '5Y' | '10Y';
+
 export interface TickerNews {
     title: string;
     source: string;
@@ -87,7 +89,7 @@ export interface TickerNews {
 }
 
 export interface TickerPriceHistory {
-    date: string; // YYYY-MM-DD
+    date: string; // YYYY-MM-DD or HH:MM:SS for intraday
     close: number;
 }
 

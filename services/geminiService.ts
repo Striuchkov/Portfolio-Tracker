@@ -1,6 +1,5 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
-import { Exchange, StockAsset, TickerDetails, TickerNews, TickerPriceHistory } from "../types";
+import { Exchange, StockAsset, TickerDetails, TickerNews, TickerPriceHistory, TimeRange } from "../types";
 
 export const isApiKeyConfigured = !!process.env.API_KEY;
 
@@ -266,19 +265,73 @@ export const fetchTickerNews = async (ticker: string, exchange: Exchange): Promi
     }
 };
 
-export const generatePriceChartSvg = async (priceHistory: TickerPriceHistory[], ticker: string): Promise<string | null> => {
+export const fetchPriceHistory = async (ticker: string, exchange: Exchange, range: TimeRange): Promise<TickerPriceHistory[] | null> => {
+    if (!isApiKeyConfigured) return null;
+
+    let promptRangeText = '';
+    let promptIntervalText = 'daily closing prices';
+    let responseFormat = 'a semicolon-separated list of date:close pairs (e.g., 2023-01-01:150.00;2023-01-02:151.25;...)';
+
+    switch (range) {
+        case '1D':
+            promptRangeText = 'for today';
+            promptIntervalText = 'intraday prices at 15-minute intervals';
+            responseFormat = 'a semicolon-separated list of time:price pairs (e.g., 09:30:00:150.00;09:45:00:151.25;...)';
+            break;
+        case '5D':
+            promptRangeText = 'for the last 5 days';
+            break;
+        case '1M':
+            promptRangeText = 'for the last 1 month';
+            break;
+        case '1Y':
+            promptRangeText = 'for the last 1 year';
+            break;
+        case '5Y':
+            promptRangeText = 'for the last 5 years';
+            break;
+        case '10Y':
+            promptRangeText = 'for the last 10 years';
+            break;
+    }
+
+    const prompt = `Fetch the price history for the stock with ticker symbol "${ticker}" on a ${exchange} exchange ${promptRangeText}, using real-time search. Provide ${promptIntervalText}. The response must be a single block of text containing ${responseFormat}. If data is unavailable, return an empty response. Do not add any explanation, markdown, or formatting.`;
+
+    try {
+        const text = await getGeminiTextResponse(prompt, true);
+        if (!text || text.trim() === '') return [];
+
+        const history = text.split(';').map(item => {
+            const parts = item.split(':');
+            if (parts.length < 2) return null;
+            const dateOrTime = parts.slice(0, -1).join(':'); // Handle HH:MM:SS format
+            const closeStr = parts[parts.length - 1];
+            const close = parseFloat(closeStr);
+            return (dateOrTime && !isNaN(close)) ? { date: dateOrTime.trim(), close } : null;
+        }).filter((item): item is TickerPriceHistory => item !== null);
+
+        return history;
+
+    } catch (error) {
+        console.error(`Error fetching ${range} price history for ${ticker}:`, error);
+        throw new Error(`Failed to fetch ${range} price history for ${ticker}.`);
+    }
+};
+
+export const generatePriceChartSvg = async (priceHistory: TickerPriceHistory[], ticker: string, range: TimeRange): Promise<string | null> => {
     if (!isApiKeyConfigured || priceHistory.length < 2) return null;
 
     const dataPoints = priceHistory.map(p => `${p.date},${p.close}`).join(';');
     const latestPrice = priceHistory[priceHistory.length - 1].close;
     const oldestPrice = priceHistory[0].close;
     const trendColor = latestPrice >= oldestPrice ? '#10B981' : '#EF4444';
+    const dataFormatString = range === '1D' ? 'HH:MM:SS,price' : 'YYYY-MM-DD,close_price';
 
     const prompt = `
     Generate an SVG for a financial price chart for the ticker ${ticker} with the following specifications:
     - The SVG should be responsive with a viewBox="0 0 400 200". Do not set a fixed width or height.
     - The background should be transparent.
-    - The data points are in 'YYYY-MM-DD,close_price' format, separated by semicolons: ${dataPoints}
+    - The data points are in '${dataFormatString}' format, separated by semicolons: ${dataPoints}
     - The line color for the price chart must be '${trendColor}'.
     - Add a subtle grid with 4 horizontal lines. Grid lines should be a light gray color like '#2D2D2D'.
     - Do not include any axis labels, titles, or legends inside the SVG. Just the line chart and grid.
