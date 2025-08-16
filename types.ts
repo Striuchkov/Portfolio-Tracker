@@ -92,7 +92,6 @@ export interface TickerDetails {
     dividendYield: number | null;
     fiftyTwoWeekLow: number | null;
     fiftyTwoWeekHigh: number | null;
-    news: TickerNews[];
     priceHistory: TickerPriceHistory[];
     dayChange: number | null;
     dayChangePercent: number | null;

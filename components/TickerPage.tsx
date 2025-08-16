@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Exchange, TickerDetails } from '../types';
-import { fetchTickerDetails, generatePriceChartSvg } from '../services/geminiService';
+import { Exchange, TickerDetails, TickerNews } from '../types';
+import { fetchTickerDetails, fetchTickerNews, generatePriceChartSvg } from '../services/geminiService';
 import { SpinnerIcon } from './icons/SpinnerIcon';
 import { ArrowLeftIcon } from './icons/ArrowLeftIcon';
 import { formatCurrency, formatPercentage } from '../utils/formatting';
@@ -26,19 +26,27 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
 
+    const [news, setNews] = useState<TickerNews[] | null>(null);
+    const [isNewsLoading, setIsNewsLoading] = useState<boolean>(false);
+    const [newsError, setNewsError] = useState<string | null>(null);
+
     useEffect(() => {
         const loadTickerData = async () => {
             setIsLoading(true);
             setError(null);
             setDetails(null);
             setChartSvg(null);
+            setNews(null);
+            setNewsError(null);
 
             try {
                 const fetchedDetails = await fetchTickerDetails(ticker, exchange);
                 if (fetchedDetails) {
                     setDetails(fetchedDetails);
                     // Don't wait for the chart to show the page
-                    generatePriceChartSvg(fetchedDetails.priceHistory, ticker).then(setChartSvg);
+                    if (fetchedDetails.priceHistory.length > 0) {
+                        generatePriceChartSvg(fetchedDetails.priceHistory, ticker).then(setChartSvg);
+                    }
                 } else {
                     throw new Error("No data returned from the API.");
                 }
@@ -55,6 +63,23 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
 
         loadTickerData();
     }, [ticker, exchange]);
+
+    const handleLoadNews = async () => {
+        setIsNewsLoading(true);
+        setNewsError(null);
+        try {
+            const fetchedNews = await fetchTickerNews(ticker, exchange);
+            if (fetchedNews) {
+                setNews(fetchedNews);
+            } else {
+                throw new Error("No news returned from the API.");
+            }
+        } catch (err: unknown) {
+            setNewsError(err instanceof Error ? err.message : "Failed to load news.");
+        } finally {
+            setIsNewsLoading(false);
+        }
+    };
 
     const dayChangeColor = useMemo(() => {
         if (!details || details.dayChange === null) return 'text-gray-400';
@@ -161,18 +186,40 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
                     {/* News */}
                     <div className="bg-gray-800 p-6 rounded-xl">
                         <h2 className="text-xl font-bold text-white mb-4">Recent News</h2>
-                        <ul className="space-y-4">
-                            {details.news.slice(0, 5).map((item, index) => (
-                                <li key={index} className="border-b border-gray-700 pb-4 last:border-b-0 last:pb-0">
-                                    <a href={item.url ?? '#'} target="_blank" rel="noopener noreferrer" className="font-semibold text-white hover:text-primary transition-colors block">
-                                        {item.title}
-                                    </a>
-                                    <div className="text-xs text-gray-400 mt-1">
-                                        <span>{item.source} &middot; {item.publishedAt}</span>
-                                    </div>
-                                </li>
-                            ))}
-                        </ul>
+                        {!news && !isNewsLoading && !newsError && (
+                            <button
+                                onClick={handleLoadNews}
+                                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-primary disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
+                            >
+                                Load Recent News
+                            </button>
+                        )}
+                        {isNewsLoading && (
+                            <div className="text-center py-4">
+                                <SpinnerIcon className="animate-spin h-8 w-8 text-primary mx-auto" />
+                                <p className="text-gray-400 mt-2">Fetching news...</p>
+                            </div>
+                        )}
+                        {newsError && (
+                            <div className="text-center py-4 text-negative">
+                                <p>{newsError}</p>
+                                <button onClick={handleLoadNews} className="mt-2 text-sm text-primary hover:underline">Try again</button>
+                            </div>
+                        )}
+                        {news && (
+                             <ul className="space-y-4">
+                                {news.length > 0 ? news.map((item, index) => (
+                                    <li key={index} className="border-b border-gray-700 pb-4 last:border-b-0 last:pb-0">
+                                        <a href={item.url ?? '#'} target="_blank" rel="noopener noreferrer" className="font-semibold text-white hover:text-primary transition-colors block">
+                                            {item.title}
+                                        </a>
+                                        <div className="text-xs text-gray-400 mt-1">
+                                            <span>{item.source} &middot; {item.publishedAt}</span>
+                                        </div>
+                                    </li>
+                                )) : <p className="text-gray-400">No recent news found.</p>}
+                            </ul>
+                        )}
                     </div>
                 </div>
             </div>
@@ -181,4 +228,3 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
 };
 
 export default TickerPage;
-

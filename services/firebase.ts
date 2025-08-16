@@ -1,4 +1,4 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
+import * as firebaseApp from 'firebase/app';
 import * as firebaseAuth from 'firebase/auth';
 import * as firestore from 'firebase/firestore';
 //conf
@@ -12,7 +12,7 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+const app = !firebaseApp.getApps().length ? firebaseApp.initializeApp(firebaseConfig) : firebaseApp.getApp();
 
 
 // Export Firebase services
