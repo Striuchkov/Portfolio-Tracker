@@ -340,4 +340,47 @@ const TickerPage: React.FC<TickerPageProps> = ({ ticker, exchange }) => {
                         {!news && !isNewsLoading && !newsError && (
                             <button
                                 onClick={handleLoadNews}
-                                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-primary disabled:bg-gray-600 disabled:
+                                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-primary disabled:bg-gray-600 disabled:cursor-not-allowed"
+                                disabled={isNewsLoading}
+                            >
+                                {isNewsLoading ? <SpinnerIcon className="animate-spin h-5 w-5" /> : 'Load Recent News'}
+                            </button>
+                        )}
+                        {isNewsLoading && (
+                            <div className="text-center">
+                                <SpinnerIcon className="animate-spin h-6 w-6 text-primary mx-auto" />
+                                <p className="mt-2 text-sm text-gray-400">Fetching news...</p>
+                            </div>
+                        )}
+                        {newsError && (
+                            <div className="text-center text-negative">
+                                <p>{newsError}</p>
+                                <button onClick={handleLoadNews} className="mt-2 text-sm text-primary hover:underline">Try again</button>
+                            </div>
+                        )}
+                        {news && news.length === 0 && (
+                             <p className="text-gray-400 text-center text-sm">No recent news found.</p>
+                        )}
+                        {news && news.length > 0 && (
+                            <ul className="space-y-4">
+                                {news.map((item, index) => (
+                                    <li key={index} className="border-b border-gray-700/50 pb-4 last:border-b-0 last:pb-0">
+                                        <a href={item.url || '#'} target="_blank" rel="noopener noreferrer" className="block hover:bg-gray-700/50 p-2 rounded-lg transition-colors">
+                                            <h4 className="font-semibold text-white leading-tight">{item.title}</h4>
+                                            <div className="flex justify-between items-center text-xs text-gray-400 mt-2">
+                                                <span>{item.source}</span>
+                                                <span>{item.publishedAt}</span>
+                                            </div>
+                                        </a>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </main>
+    );
+};
+
+export default TickerPage;
